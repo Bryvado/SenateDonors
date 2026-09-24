@@ -56,11 +56,12 @@ function hexBlend(a, b, ratio) {
   const x = toRGB(a), y = toRGB(b), t = Math.max(0, Math.min(1, ratio));
   return '#' + x.map((v, i) => Math.round(v + (y[i] - v) * t).toString(16).padStart(2, '0')).join('');
 }
-function color(amounts) {
+function color(amounts, geography = 'zcta') {
   const a = amounts[0][0], b = amounts[1][0], total = a + b;
   if (total <= 0) return {fillColor: '#d7dddc', fillOpacity: .6};
   if (state.measure === 'volume') {
-    const t = Math.min(1, Math.log10(total + 1) / 5);
+    const log = Math.log10(total + 1);
+    const t = geography === 'state' ? Math.max(0, Math.min(1, (log - 4) / 3)) : Math.min(1, log / 5);
     return {fillColor: hexBlend('#e9e1d8', '#174b6a', t), fillOpacity: .88};
   }
   const share = a / total;
@@ -70,7 +71,7 @@ function color(amounts) {
 function stateStyle(feature) {
   const code = feature.properties.code;
   return {pane: 'statePane', color: '#647783', weight: state.open.has(code) ? 1.8 : .8,
-    opacity: .85, ...color(comparison(state.totals, code)), fillOpacity: state.open.has(code) ? .08 : .8};
+    opacity: .85, ...color(comparison(state.totals, code), 'state'), fillOpacity: state.open.has(code) ? .08 : .65};
 }
 function zctaStyle(code, feature) {
   return {pane: 'zctaPane', color: '#667b83', weight: .45, opacity: .35,
@@ -131,7 +132,7 @@ function updateScope() {
 }
 function updateLegend() {
   if (state.measure === 'volume') {
-    $('legend').innerHTML = `<div class="legend-title">Combined positive receipts</div><div class="scale volume"></div><div class="ticks"><span>$0</span><span>$100</span><span>$10k</span><span>$100k+</span></div><div class="legend-note">Same scale for states and ZCTAs · gray has no receipts</div>`;
+    $('legend').innerHTML = `<div class="legend-title">Combined positive receipts</div><div class="scale volume"></div><div class="ticks"><span>Less</span><span>More</span></div><div class="legend-note">ZCTAs: $0–$100k+ · states: $10k–$10m+ · gray has no receipts</div>`;
   } else {
     $('legend').innerHTML = `<div class="legend-title">Share of positive receipts</div><div class="scale"></div><div class="ticks"><span>${names[state.second]} 100%</span><span>50 / 50</span><span>${names[state.first]} 100%</span></div><div class="legend-note">Fainter areas have fewer dollars · gray has no receipts</div>`;
   }
