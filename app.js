@@ -5,7 +5,7 @@ const phases = ['pre_primary', 'between_primary_runoff', 'post_runoff'];
 const money = (n) => '$' + Math.round(n).toLocaleString('en-US');
 const state = {period: 'between_primary_runoff', first: 'C00919084', second: 'C00901918', measure: 'lead',
   receipts: new Map(), totals: new Map(), zctas: new Map(), open: new Map(), pending: new Map(), states: null, coverage: null};
-const map = L.map('map', {zoomControl: false, doubleClickZoom: false, minZoom: 3, maxZoom: 12, preferCanvas: true,
+const map = L.map('map', {zoomControl: false, doubleClickZoom: false, minZoom: 3, maxZoom: 12, preferCanvas: false,
   worldCopyJump: false, zoomSnap: .25, maxBounds: [[-10, -185], [73, -40]], maxBoundsViscosity: .6});
 map.createPane('statePane'); map.getPane('statePane').style.zIndex = 410;
 map.createPane('zctaPane'); map.getPane('zctaPane').style.zIndex = 420;
