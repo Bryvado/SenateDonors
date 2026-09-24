@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#eff1f2">
+  <title>Senate donors · FEC ZIP map</title>
+  <link rel="stylesheet" href="vendor/leaflet.css">
+  <link rel="stylesheet" href="style.css">
+  <script defer src="vendor/leaflet.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <main id="map" aria-label="Interactive map of itemized Senate campaign contributions"></main>
+  <div class="masthead panel">
+    <div class="brand" aria-label="Senate donors">SENATE<span> / </span>DONORS</div>
+    <div class="separator" aria-hidden="true"></div>
+    <label class="control"><span>Period</span>
+      <select id="period">
+        <option value="all">All reported</option>
+        <option value="pre_primary">Through Mar 3</option>
+        <option value="between_primary_runoff" selected>Mar 4 – May 26</option>
+        <option value="post_runoff">Since May 27</option>
+      </select>
+    </label>
+    <label class="control candidate"><span>Blue</span>
+      <select id="first"><option value="C00919084">Talarico</option><option value="C00369033">Cornyn</option><option value="C00901918">Paxton</option></select>
+    </label>
+    <span class="versus" aria-hidden="true">vs</span>
+    <label class="control candidate"><span>Red</span>
+      <select id="second"><option value="C00901918">Paxton</option><option value="C00369033">Cornyn</option><option value="C00919084">Talarico</option></select>
+    </label>
+    <label class="control"><span>Color</span>
+      <select id="measure"><option value="lead">Dominance</option><option value="volume">Combined $</option></select>
+    </label>
+    <button id="about-toggle" class="icon" title="Sources and methods" aria-label="Sources and methods" aria-expanded="false">i</button>
+  </div>
+  <div class="map-actions panel" aria-label="Map controls">
+    <button id="home" title="Return to Texas" aria-label="Return to Texas">TX</button>
+    <button id="nation" title="View all states" aria-label="View all states">US</button>
+    <button id="zoom-in" title="Zoom in" aria-label="Zoom in">+</button>
+    <button id="zoom-out" title="Zoom out" aria-label="Zoom out">−</button>
+    <button id="tiles" title="Toggle USGS basemap" aria-label="Toggle USGS basemap" aria-pressed="true">▧</button>
+  </div>
+  <div class="legend panel" id="legend" aria-live="polite"></div>
+  <div class="foot panel" id="foot" aria-live="polite"><span id="scope">Loading map…</span><span id="coverage"></span></div>
+  <aside class="about panel" id="about" hidden aria-label="Data sources and methods">
+    <button class="close" id="about-close" aria-label="Close sources and methods">×</button>
+    <h1>About this map</h1>
+    <p>Positive itemized individual receipts from the principal federal campaign committees of James Talarico, John Cornyn, and Ken Paxton. Receipt dates define the periods. Amendments replace superseded reports.</p>
+    <p>Color compares <strong>dollars received</strong> at a reported contributor ZIP. Outlines are 2020 Census ZIP Code Tabulation Areas (ZCTAs), which do not match every mailing ZIP. Unitemized contributions and ZIPs without a matching ZCTA are absent from the local shading. State totals include their reported ZIPs, including those without a ZCTA.</p>
+    <p>Hover for dollar amounts and contribution entries. Click a state to open its ZCTAs. Double-click a state or its ZCTAs to hide that detail. Colors can be strong even where only a small amount was given.</p>
+    <div class="links"><a href="data/receipts.csv" download>Download ZIP totals ↗</a><a href="data/state_totals.csv" download>State totals ↗</a><a href="https://www.fec.gov/data/" target="_blank" rel="noopener">FEC ↗</a><a href="https://www.census.gov/geographies/mapping-files/time-series/geo/cartographic-boundary.html" target="_blank" rel="noopener">Census geometry ↗</a></div>
+    <p class="small">No individual names or addresses are published here. Filing updates are checked every six hours; the display changes only after the FEC files a new or amended report and the totals pass reconciliation.</p>
+  </aside>
+  <div id="error" class="error panel" role="alert" hidden></div>
+</body>
+</html>
