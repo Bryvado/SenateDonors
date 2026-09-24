@@ -98,10 +98,10 @@ async function openState(code, fit = true) {
   $('scope').textContent = `Loading ${state.statesByCode[code]}…`;
   try {
     let geo = state.zctas.get(code);
-    if (!geo) { geo = await packed(`data/zctas/${encodeURIComponent(code)}.bin`); state.zctas.set(code, geo); }
+    if (!geo) { geo = await packed(`data/zctas/${encodeURIComponent(code)}.bin?v=2`); state.zctas.set(code, geo); }
     if (state.pending.get(code) !== request) return;
     const layer = L.geoJSON(geo, {
-      pane: 'zctaPane', style: feature => zctaStyle(code, feature),
+      pane: 'zctaPane', smoothFactor: .5, style: feature => zctaStyle(code, feature),
       onEachFeature: (feature, polygon) => {
         const zip = feature.properties.zip;
         polygon.bindTooltip(() => tooltip(code, zip), {sticky: true, direction: 'top'});
@@ -145,7 +145,7 @@ function refresh() {
 }
 async function start() {
   const [boundaries, receipts, totals, coverage] = await Promise.all([
-    json('data/states.json'), file('data/receipts.csv'), file('data/state_totals.csv'), json('data/coverage.json')]);
+    json('data/states.json?v=2'), file('data/receipts.csv'), file('data/state_totals.csv'), json('data/coverage.json')]);
   addRows(csv(receipts), state.receipts, row => row.state + '|' + row.zip + '|' + row.candidate);
   addRows(csv(totals), state.totals, row => row.state + '|' + row.candidate);
   state.coverage = coverage;

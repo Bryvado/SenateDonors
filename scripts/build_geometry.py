@@ -14,15 +14,18 @@ import geopandas as gpd
 from shapely.geometry import mapping
 
 
-def compact_feature(geometry, properties, tolerance):
-    geometry = geometry.simplify(tolerance, preserve_topology=True)
+def compact_feature(geometry, properties, tolerance=None):
+    if tolerance is not None:
+        geometry = geometry.simplify(tolerance, preserve_topology=True)
     if geometry.is_empty:
         return None
     result = mapping(geometry)
     def rounded(value):
         if isinstance(value, (list, tuple)):
             return [rounded(item) for item in value]
-        return round(value, 4)
+        # Seven digits retain narrow boundaries without creating self-intersections
+        # from coordinate rounding (five digits invalidated dozens of ZCTAs).
+        return round(value, 7)
     result["coordinates"] = rounded(result["coordinates"])
     return {"type": "Feature", "properties": properties, "geometry": result}
 
@@ -58,7 +61,9 @@ def main():
     assert assignment.notna().all() and len(assignment) == len(zctas)
     zctas["state"] = assignment
     for code, rows in zctas.groupby("state"):
-        features = [compact_feature(row.geometry, {"zip": row.ZCTA5CE20}, 0.006) for row in rows.itertuples()]
+        # The Census source is already generalized at 1:500,000. Additional
+        # simplification erases urban ZCTA boundaries at street-level zoom.
+        features = [compact_feature(row.geometry, {"zip": row.ZCTA5CE20}) for row in rows.itertuples()]
         features = [feature for feature in features if feature is not None]
         payload = json.dumps({"type": "FeatureCollection", "features": features}, separators=(",", ":")).encode()
         (out / "zctas" / f"{code}.bin").write_bytes(gzip.compress(payload, compresslevel=9, mtime=0))
