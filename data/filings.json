@@ -1,0 +1,152 @@
+{
+  "committees": {
+    "C00919084": [
+      1921319,
+      1997887,
+      2011129,
+      2011130,
+      2011132
+    ],
+    "C00369033": [
+      1886923,
+      1903060,
+      1931089,
+      1942201,
+      1948212,
+      1963451,
+      1974751,
+      1995596
+    ],
+    "C00901918": [
+      1947090,
+      1947091,
+      1950075,
+      1973263,
+      1973265,
+      1996198,
+      2000910
+    ]
+  },
+  "reports": [
+    {
+      "committee": "C00919084",
+      "file_number": 1997887,
+      "url": "https://docquery.fec.gov/csv/887/1997887.csv",
+      "coverage_end": "2026-06-30"
+    },
+    {
+      "committee": "C00919084",
+      "file_number": 2011132,
+      "url": "https://docquery.fec.gov/csv/132/2011132.csv",
+      "coverage_end": "2026-03-31"
+    },
+    {
+      "committee": "C00919084",
+      "file_number": 2011130,
+      "url": "https://docquery.fec.gov/csv/130/2011130.csv",
+      "coverage_end": "2026-02-11"
+    },
+    {
+      "committee": "C00919084",
+      "file_number": 2011129,
+      "url": "https://docquery.fec.gov/csv/129/2011129.csv",
+      "coverage_end": "2025-12-31"
+    },
+    {
+      "committee": "C00919084",
+      "file_number": 1921319,
+      "url": "https://docquery.fec.gov/csv/319/1921319.csv",
+      "coverage_end": "2025-09-30"
+    },
+    {
+      "committee": "C00369033",
+      "file_number": 1995596,
+      "url": "https://docquery.fec.gov/csv/596/1995596.csv",
+      "coverage_end": "2026-06-30"
+    },
+    {
+      "committee": "C00369033",
+      "file_number": 1974751,
+      "url": "https://docquery.fec.gov/csv/751/1974751.csv",
+      "coverage_end": "2026-05-06"
+    },
+    {
+      "committee": "C00369033",
+      "file_number": 1963451,
+      "url": "https://docquery.fec.gov/csv/451/1963451.csv",
+      "coverage_end": "2026-03-31"
+    },
+    {
+      "committee": "C00369033",
+      "file_number": 1948212,
+      "url": "https://docquery.fec.gov/csv/212/1948212.csv",
+      "coverage_end": "2026-02-11"
+    },
+    {
+      "committee": "C00369033",
+      "file_number": 1942201,
+      "url": "https://docquery.fec.gov/csv/201/1942201.csv",
+      "coverage_end": "2025-12-31"
+    },
+    {
+      "committee": "C00369033",
+      "file_number": 1931089,
+      "url": "https://docquery.fec.gov/csv/089/1931089.csv",
+      "coverage_end": "2025-09-30"
+    },
+    {
+      "committee": "C00369033",
+      "file_number": 1903060,
+      "url": "https://docquery.fec.gov/csv/060/1903060.csv",
+      "coverage_end": "2025-06-30"
+    },
+    {
+      "committee": "C00369033",
+      "file_number": 1886923,
+      "url": "https://docquery.fec.gov/csv/923/1886923.csv",
+      "coverage_end": "2025-03-31"
+    },
+    {
+      "committee": "C00901918",
+      "file_number": 1996198,
+      "url": "https://docquery.fec.gov/csv/198/1996198.csv",
+      "coverage_end": "2026-06-30"
+    },
+    {
+      "committee": "C00901918",
+      "file_number": 2000910,
+      "url": "https://docquery.fec.gov/csv/910/2000910.csv",
+      "coverage_end": "2026-05-06"
+    },
+    {
+      "committee": "C00901918",
+      "file_number": 1973265,
+      "url": "https://docquery.fec.gov/csv/265/1973265.csv",
+      "coverage_end": "2026-03-31"
+    },
+    {
+      "committee": "C00901918",
+      "file_number": 1973263,
+      "url": "https://docquery.fec.gov/csv/263/1973263.csv",
+      "coverage_end": "2026-02-11"
+    },
+    {
+      "committee": "C00901918",
+      "file_number": 1950075,
+      "url": "https://docquery.fec.gov/csv/075/1950075.csv",
+      "coverage_end": "2025-12-31"
+    },
+    {
+      "committee": "C00901918",
+      "file_number": 1947091,
+      "url": "https://docquery.fec.gov/csv/091/1947091.csv",
+      "coverage_end": "2025-09-30"
+    },
+    {
+      "committee": "C00901918",
+      "file_number": 1947090,
+      "url": "https://docquery.fec.gov/csv/090/1947090.csv",
+      "coverage_end": "2025-06-30"
+    }
+  ]
+}

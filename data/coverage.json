@@ -1,0 +1,8 @@
+{
+  "retrieved": "2026-09-24",
+  "coverage_start": "2025-01-01",
+  "coverage_end": "2026-06-30",
+  "filing_count": 20,
+  "source": "Audited FEC electronic filings",
+  "geography": "Reported contributor state and ZIP matched to 2020 Census ZCTA"
+}

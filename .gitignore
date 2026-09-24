@@ -1,6 +1,11 @@
-.cache/
 __pycache__/
-node_modules/
-test-results/
-*.pyc
+*.py[cod]
 .DS_Store
+_site/
+zctas.zip
+states.zip
+*.gpkg
+*.shp
+*.dbf
+*.shx
+*.prj
