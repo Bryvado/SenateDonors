@@ -10,17 +10,16 @@ const money = (n) => '$' + Math.round(n).toLocaleString('en-US');
 const short = (n) => n >= 1e6 ? '$' + +(n / 1e6).toFixed(1) + 'm' : n >= 1e3 ? '$' + +(n / 1e3).toFixed(1) + 'k' : '$' + Math.round(n);
 const monthLabel = (m, style = 'short') => new Date(m + '-15').toLocaleDateString('en-US', {month: style, year: 'numeric'});
 const NEUTRAL = '#ece7e0', EMPTY = '#e6eaeb', CONUS = [[24, -125], [50, -66]];
-// floor: combined dollars below which "who led" is not called; breaks: "total raised" class edges.
+// floor: combined dollars below which "who led" is not called.
 const levels = {
-  zcta: {label: 'ZCTAs', noun: 'ZCTA', floor: 250, breaks: [500, 2500, 1e4, 5e4], minPop: 1000},
-  county: {label: 'counties', noun: 'county', floor: 1000, breaks: [1e3, 1e4, 1e5, 1e6], national: true, minPop: 1000},
-  cd: {label: 'congressional districts', noun: 'district', floor: 5000, breaks: [2.5e4, 1e5, 2.5e5, 1e6], national: true, minPop: 1000},
-  cbsa: {label: 'metro/micro areas', noun: 'metro area', floor: 1000, breaks: [1e3, 1e4, 1e5, 1e6], national: true, minPop: 1000},
-  cousub: {label: 'county subdivisions', noun: 'county subdivision', floor: 250, breaks: [500, 2500, 1e4, 5e4], minPop: 1000},
-  state: {label: 'states', noun: 'state', floor: 1e4, breaks: [5e4, 2.5e5, 1e6, 5e6], minPop: 0},
+  zcta: {label: 'ZCTAs', noun: 'ZCTA', floor: 250, minPop: 1000},
+  county: {label: 'counties', noun: 'county', floor: 1000, national: true, minPop: 1000},
+  cd: {label: 'congressional districts', noun: 'district', floor: 5000, national: true, minPop: 1000},
+  cbsa: {label: 'metro/micro areas', noun: 'metro area', floor: 1000, national: true, minPop: 1000},
+  cousub: {label: 'county subdivisions', noun: 'county subdivision', floor: 250, minPop: 1000},
+  state: {label: 'states', noun: 'state', floor: 1e4, minPop: 0},
 };
-const perCapitaBreaks = [1, 5, 20, 100]; // dollars per 100 residents
-const ramp = ['#f6e27a', '#8fce6b', '#2fa88a', '#2b7890', '#3b3f86']; // light-to-dark, viridis-like
+const ramp = ['#fde725', '#5ec962', '#21918c', '#3b528b', '#440154']; // viridis, light to dark
 const state = {period: 'all', first: 'C00919084', second: 'C00901918', measure: 'lead', level: 'zcta',
   selected: [], nationwide: false, receipts: new Map(), totals: new Map(), areas: {}, unallocated: new Map(),
   population: {}, monthly: null, months: [], geo: new Map(), layer: null, index: new Map(), render: 0, states: null,
@@ -31,7 +30,7 @@ map.createPane('statePane'); map.getPane('statePane').style.zIndex = 410;
 map.createPane('zctaPane'); map.getPane('zctaPane').style.zIndex = 420;
 map.fitBounds(CONUS);
 const tiles = L.tileLayer('https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}', {
-  maxZoom: 12, opacity: .45, attribution: 'Basemap: <a href="https://www.usgs.gov/programs/national-geospatial-program/national-map" target="_blank" rel="noopener">USGS The National Map</a>'
+  maxZoom: 12, opacity: .3, attribution: 'Basemap: <a href="https://www.usgs.gov/programs/national-geospatial-program/national-map" target="_blank" rel="noopener">USGS The National Map</a>'
 }).addTo(map);
 map.attributionControl.setPrefix('<a href="https://leafletjs.com/" target="_blank" rel="noopener">Leaflet</a> · <a href="https://www.census.gov/geographies/mapping-files.html" target="_blank" rel="noopener">Census boundaries</a>');
 
@@ -95,10 +94,10 @@ function leadClasses() {
 function classify(amounts, level, population) {
   const a = amounts[0][0], b = amounts[1][0], total = a + b, spec = levels[level];
   if (total <= 0) return {fill: EMPTY, kind: 'empty'};
-  if (state.measure === 'volume') return {fill: ramp[bin(total, spec.breaks)], kind: 'value'};
+  if (state.measure === 'volume') return {fill: ramp[bin(total, state.breaks)], kind: 'value'};
   if (state.measure === 'capita') {
     if (!population) return {fill: hatched('#d9d5cf'), kind: 'thin'};
-    const color = ramp[bin(100 * total / population, perCapitaBreaks)];
+    const color = ramp[bin(100 * total / population, state.breaks)];
     return population < spec.minPop ? {fill: hatched(color), kind: 'thin'} : {fill: color, kind: 'value'};
   }
   const color = leadClasses()[bin(a / total, [.2, .4, .6, .8])];
@@ -121,13 +120,50 @@ function paint(amounts, level, population) {
   return {fillColor: fill, fillOpacity: kind === 'empty' ? .3 : .88};
 }
 const population = (level, id) => state.population[level]?.get(id);
+// Only one level is ever colored: states when nothing is open (or on the timeline); otherwise the
+// open areas carry the color and every state is plain context, so no two scales share the screen.
+const statesColored = () => state.timeline || (!state.nationwide && !state.selected.length);
 function stateStyle(feature) {
   const code = feature.properties.code, chosen = !state.timeline && !state.nationwide && state.selected.includes(code);
-  const base = {pane: 'statePane', color: chosen ? '#10212b' : '#5c6f78', weight: chosen ? 2.4 : .8, opacity: .85};
-  if (!state.timeline && (state.nationwide || chosen)) return {...base, fillOpacity: 0};
-  // Unselected states are the main view with nothing open, and context once states are open.
-  const context = !state.timeline && state.selected.length;
-  return {...base, ...paint(stateAmounts(code), 'state', population('state', code)), fillOpacity: context ? .45 : .82};
+  const base = {pane: 'statePane', color: chosen ? '#10212b' : '#7d8e95', weight: chosen ? 2.4 : .8, opacity: .9};
+  if (!statesColored()) return {...base, fillColor: '#ffffff', fillOpacity: chosen || state.nationwide ? 0 : .6};
+  return {...base, ...paint(stateAmounts(code), 'state', population('state', code)), fillOpacity: .9};
+}
+/* "Total raised" and "Per 100 residents" classes are fifths of whatever is colored right now (the open
+   areas, or states), rounded to two significant digits; the legend always lists the actual cutoffs.
+   On the timeline the cutoffs come from every month, so they hold still while it plays. */
+function nice(v) {
+  if (v <= 0) return 0;
+  const p = 10 ** (Math.floor(Math.log10(v)) - 1);
+  return Math.round(v / p) * p;
+}
+function computeBreaks() {
+  if (state.measure === 'lead') { state.breaks = []; return; }
+  const capita = state.measure === 'capita', list = [];
+  const push = (amounts, pop, minPop) => {
+    const total = amounts[0][0] + amounts[1][0];
+    if (total <= 0) return;
+    if (!capita) list.push(total); else if (pop && pop >= minPop) list.push(100 * total / pop);
+  };
+  if (state.timeline) {
+    const saved = state.timeIndex;
+    const indexes = state.timeMode === 'month' ? state.months.map((m, i) => i) : [state.months.length - 1];
+    for (const i of indexes) { state.timeIndex = i; for (const code of Object.keys(state.statesByCode)) push(stateAmounts(code), population('state', code), 0); }
+    state.timeIndex = saved;
+  } else if (statesColored() || !state.layer) {
+    for (const code of Object.keys(state.statesByCode)) push(stateAmounts(code), population('state', code), 0);
+  } else {
+    const level = state.layer.level, seen = new Set();
+    for (const polygon of state.layer.getLayers()) {
+      const {store, key, pop} = areaKey(level, polygon.feature);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      push(comparison(store, key), population(level, pop), levels[level].minPop);
+    }
+  }
+  list.sort((a, b) => a - b);
+  const cuts = [.2, .4, .6, .8].map(q => nice(list[Math.min(list.length - 1, Math.floor(q * list.length))] || 0));
+  state.breaks = cuts.filter((v, i) => v > 0 && v > (cuts[i - 1] || 0));
 }
 function areaKey(level, feature) {
   const p = feature.properties;
@@ -284,7 +320,7 @@ function updateScope(loading) {
 
 /* Legend */
 function updateLegend() {
-  const level = state.timeline || !state.selected.length && !state.nationwide ? 'state' : state.level, spec = levels[level];
+  const level = statesColored() ? 'state' : state.level, spec = levels[level];
   const swatches = (colors) => colors.map(c => `<span style="background:${c}"></span>`).join('');
   const stripe = (color) => `<span class="swatch hatch" style="background-color:${color}"></span>`;
   const hatch = state.measure === 'lead' ? stripe(hues[state.first]) + stripe(hues[state.second]) : stripe(ramp[2]), empty = `<span class="swatch" style="background:${EMPTY}"></span>`;
@@ -294,10 +330,11 @@ function updateLegend() {
       `<div class="ticks"><span>${names[state.second]} 80%+</span><span>Even</span><span>${names[state.first]} 80%+</span></div>` +
       `<div class="legend-note">${hatch}Under ${short(spec.floor)} combined · too little to call ${empty}None</div>`;
   } else {
-    const capita = state.measure === 'capita', breaks = capita ? perCapitaBreaks : spec.breaks;
+    const capita = state.measure === 'capita', breaks = state.breaks, fmt = (v) => capita && v < 10 ? '$' + +v.toFixed(2) : short(v);
     html = `<div class="legend-title">${capita ? 'Dollars per 100 residents' : 'Total raised'} · ${names[state.first]} + ${names[state.second]}</div>` +
-      `<div class="steps">${swatches(ramp)}</div><div class="ticks">${breaks.map(b => `<span>${short(b)}</span>`).join('')}</div>` +
-      `<div class="legend-note">${capita ? `${hatch}Under ${spec.minPop.toLocaleString()} residents · unstable rate ` : ''}${empty}None</div>`;
+      `<div class="steps">${swatches(ramp.slice(0, breaks.length + 1))}</div><div class="ticks">${breaks.map(b => `<span>${fmt(b)}</span>`).join('')}</div>` +
+      `<div class="legend-note">Each color holds about a fifth of the ${levels[level].label} shown</div>` +
+      `<div class="legend-note">${capita && spec.minPop ? `${hatch}Under ${spec.minPop.toLocaleString()} residents · unstable rate ` : ''}${empty}None</div>`;
   }
   if (level !== 'zcta' && level !== 'state') html += '<div class="legend-note">Area amounts are estimates apportioned from ZIPs</div>';
   $('legend').innerHTML = html;
@@ -549,6 +586,7 @@ function openPanel(id, open) {
 
 function refresh() {
   if (!state.states) return;
+  computeBreaks();
   state.states.setStyle(stateStyle);
   if (state.layer) state.layer.setStyle(feature => areaStyle(state.layer.level, feature));
   document.querySelectorAll('.candidate-dot').forEach(dot => { dot.style.background = hues[state[dot.dataset.slot]]; });
