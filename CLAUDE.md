@@ -82,7 +82,7 @@ Selection model: one area layer (`state.layer`) rebuilt by `render()` whenever s
 
 Shading (`classify()`): candidate colors are fixed per candidate everywhere (`hues`: Talarico #246a93, Cornyn #b07d12, Paxton #ac3546; pairs checked with the dataviz palette validator). "Who led" = 5 steps of first-candidate share (<20, 20-40, 40-60, 60-80, 80+%) between the two hues through a neutral; combined dollars under `levels[x].floor` ($250 ZCTA/cousub, $1k county/CBSA, $5k CD, $10k state) get the SVG hatch instead. "Total raised" = 5 single-hue classes at `levels[x].breaks`. "Per 100 residents" = same ramp at $1/$5/$20/$100, hatched below 1,000 residents or with no population (island areas). No receipts = pale `EMPTY` at low opacity. Unselected states are shaded at state level; selected ones are outline-only.
 
-Side panel: one card per selected state (or one "United States" card when nationwide) with period totals for all three candidates and a monthly line chart (all three candidates, primary/runoff markers, selected period band, hover crosshair). Collapses to a bottom drawer under 850px.
+Side panel: one card per selected state, plus an "All selected" sum card on top when 2+ are selected (or one "United States" card when nationwide); the Add state list starts with "All states (nationwide)" with period totals for all three candidates and a monthly line chart (all three candidates, primary/runoff markers, selected period band, hover crosshair). The panel sizes to its content (width scales with the window; `.wide` two-column grid when 3+ states are selected above 1100px) and collapses from its header on any screen; under 850px it is a bottom drawer that starts collapsed.
 
 The CSV parser is a plain comma split. That works only because no field is quoted; keep outputs quote-free or replace the parser.
 
@@ -90,7 +90,7 @@ The CSV parser is a plain comma split. That works only because no field is quote
 
 - Candidate committee IDs and names: `CANDIDATES` in `update_data.py`, `names`/`hues`/`order` in `app.js`, and both `<select>` lists in `index.html`. Adding a candidate touches all three plus the legend logic, which assumes exactly two compared.
 - Phase keys and date cutoffs: `PHASES`/`phase_for` in Python, `phases` in `app.js`, option labels in `index.html` ("Through Mar 3", "Mar 4 – May 26", "Since May 27"), `phaseMonths` in `app.js`.
-- Cache-busting query strings: `app.js?v=7` and `style.css?v=7` in `index.html`, `states.json?v=2`, `zctas/*.bin?v=3` and `levels/geo/*.bin?v=1` in `app.js`. Bump when those files change.
+- Cache-busting query strings: `app.js?v=8` and `style.css?v=8` in `index.html`, `states.json?v=2`, `zctas/*.bin?v=3` and `levels/geo/*.bin?v=1` in `app.js`. Bump when those files change.
 - The Pages artifact is built by copying `index.html style.css app.js data vendor` only. New top-level assets must be added to the "Prepare static site" step. (This CLAUDE.md is therefore not published.)
 - The workflow's commit step `git add`s the four data outputs plus `data/state_monthly.csv` and `data/levels/*.csv`. A new generated file needs to be added there too.
 - Level keys (`county`, `cd`, `cbsa`, `cousub`): `LEVELS` in `update_data.py`, `levels` in `app.js`, the `#level` select, and the file names in `build_geometry.py`.
