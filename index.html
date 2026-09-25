@@ -6,9 +6,9 @@
   <meta name="theme-color" content="#eff1f2">
   <title>Senate donors · FEC ZIP map</title>
   <link rel="stylesheet" href="vendor/leaflet.css">
-  <link rel="stylesheet" href="style.css?v=12">
+  <link rel="stylesheet" href="style.css?v=13">
   <script defer src="vendor/leaflet.js"></script>
-  <script defer src="app.js?v=12"></script>
+  <script defer src="app.js?v=13"></script>
 </head>
 <body>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -18,14 +18,14 @@
   <div class="masthead panel">
     <div class="brand" aria-label="Senate donors">SENATE<span> / </span>DONORS</div>
     <div class="separator" aria-hidden="true"></div>
-    <label class="control"><span>Period</span>
-      <select id="period">
-        <option value="all" selected>All reported</option>
-        <option value="pre_primary">Through Mar 3</option>
-        <option value="between_primary_runoff">Mar 4 – May 26</option>
-        <option value="post_runoff">Since May 27</option>
-      </select>
-    </label>
+    <div class="control period" role="group" aria-labelledby="period-name"><span id="period-name">Period · <b id="period-value">All reported</b></span>
+      <div class="period-slider">
+        <div class="period-track"><span id="period-fill" class="period-fill"></span><i style="left:33.33%"></i><i style="left:66.67%"></i></div>
+        <input type="range" id="period-lo" min="0" max="3" step="1" value="0" aria-label="Period start" aria-valuetext="From the start">
+        <input type="range" id="period-hi" min="0" max="3" step="1" value="3" aria-label="Period end">
+      </div>
+      <div class="period-ticks"><span>Through Mar 3</span><span>Mar 4 – May 26</span><span>Since May 27</span></div>
+    </div>
     <label class="control candidate"><span><i class="candidate-dot" data-slot="first"></i>Compare</span>
       <select id="first"><option value="C00919084">Talarico</option><option value="C00369033">Cornyn</option><option value="C00901918">Paxton</option></select>
     </label>
@@ -116,7 +116,7 @@
   <aside class="about panel" id="about" hidden aria-label="Data sources and methods">
     <button class="close" id="about-close" aria-label="Close sources and methods">×</button>
     <h1>About this map</h1>
-    <p>Itemized contributions from individuals to the principal federal campaign committees of James Talarico, John Cornyn, and Ken Paxton, placed at each contributor's reported ZIP. Receipt dates define the periods. Amendments replace superseded reports. Unitemized contributions (generally $200 or less per donor per election) are not included.</p>
+    <p>Itemized contributions from individuals to the principal federal campaign committees of James Talarico, John Cornyn, and Ken Paxton, placed at each contributor's reported ZIP. Receipt dates define the three periods (through the Mar 3 primary, Mar 4 – May 26 runoff, and since May 27); drag the two Period handles to include any continuous stretch of them. Amendments replace superseded reports. Unitemized contributions (generally $200 or less per donor per election) are not included.</p>
     <p><strong>Who led</strong> shows the first candidate's share of the two compared candidates' dollars in five steps. There is no fixed cutoff for places with few dollars: colors fade smoothly toward pale as the dollars behind them shrink, relative to the places shown. <strong>Total raised</strong> is the pair's combined dollars. <strong>Per 100 residents</strong> divides that by ACS 2020–2024 population and fades places with few residents, whose rates are less stable. For these two, each color holds about a fifth of the places shown, and the legend lists the cutoffs. Only one level is colored at a time: states when nothing is open, otherwise just the open areas, with other states left plain. Contribution counts are entries, not unique donors.</p>
     <p>ZIP outlines are 2020 Census ZIP Code Tabulation Areas (ZCTAs), which do not match every mailing ZIP. The County, Congressional district, Metro/micro area, and County subdivision views apportion each reported ZIP's totals among the areas it overlaps, using the share of the ZIP's residential addresses in each area (all addresses for ZIPs with none) from the HUD USPS ZIP crosswalk (June 2026). Amounts and counts there are <strong>estimates</strong>. ZIPs outside the crosswalk and non-metro or unassigned portions are left out of the shading, but state totals still include them. Congressional districts are the 119th Congress districts, which the HUD crosswalk uses; Texas's 2025 mid-decade plan is not shown.</p>
     <p>Click a state to show it alone; Shift-, Ctrl- or ⌘-click (or “Add state”) to compare several. The panels on the left open <strong>Totals</strong> (each selected state's totals and monthly receipts), <strong>Top places</strong> (the leading areas in view by dollars, per resident, share, or average contribution), <strong>Donor map</strong> (how much of each candidate's money comes from Texas and which states give most), and <strong>Filter</strong> (a histogram with minimum and maximum handles for dollars, per-resident rate, share, average contribution, or number of contributions), and <strong>Timeline</strong> (plays the race month by month on the state map). Double-click any ZIP, county, or district to return to the U.S. view. Drag panels by their title bars and resize them from the corner; they reset when you reload. Nationwide view is available for counties, districts, and metro areas.</p>
