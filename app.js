@@ -5,6 +5,15 @@ const names = {C00919084: 'Talarico', C00369033: 'Cornyn', C00901918: 'Paxton'};
 const hues = {C00919084: '#1f6fd1', C00369033: '#e09a12', C00901918: '#d62f45'};
 const order = ['C00919084', 'C00369033', 'C00901918'];
 const phases = ['pre_primary', 'between_primary_runoff', 'post_runoff'];
+// Period is a contiguous span of phases, [start, end) as phase indexes; the masthead slider snaps to phase boundaries.
+const phaseEdges = ['Jan 2025', 'Mar 3', 'May 26', 'latest'];
+function periodLabel() {
+  const [a, b] = state.span;
+  if (a === 0 && b === phases.length) return 'All reported';
+  if (a === 0) return `Through ${phaseEdges[b]}`;
+  if (b === phases.length) return `Since ${['', 'Mar 4', 'May 27'][a]}`;
+  return ['', 'Mar 4', 'May 27'][a] + ' – ' + phaseEdges[b];
+}
 const phaseMonths = {pre_primary: ['2025-01', '2026-03'], between_primary_runoff: ['2026-03', '2026-05'], post_runoff: ['2026-05', '9999-12']};
 const money = (n) => '$' + Math.round(n).toLocaleString('en-US');
 const short = (n) => n >= 1e6 ? '$' + +(n / 1e6).toFixed(1) + 'm' : n >= 1e3 ? '$' + +(n / 1e3).toFixed(1) + 'k' : '$' + Math.round(n);
@@ -28,7 +37,7 @@ const stats = {
   avg: {label: () => 'Average contribution', value: (a, b) => a[2] + b[2] > 0 ? (a[0] + b[0]) / (a[2] + b[2]) : null, log: true, format: short},
   count: {label: () => 'Contributions', value: (a, b) => a[2] + b[2], log: true, format: (v) => people(v)},
 };
-const state = {period: 'all', first: 'C00919084', second: 'C00901918', measure: 'lead', level: 'zcta',
+const state = {span: [0, 3], first: 'C00919084', second: 'C00901918', measure: 'lead', level: 'zcta',
   selected: [], nationwide: false, receipts: new Map(), totals: new Map(), areas: {}, unallocated: new Map(),
   population: {}, monthly: null, months: [], geo: new Map(), layer: null, index: new Map(), render: 0, states: null,
   coverage: null, breaks: [], fade: null, chartMode: 'monthly', timeline: false, timeIndex: 0, timeMode: 'cumulative',
@@ -71,7 +80,7 @@ function addRows(rows, destination, key) {
 function values(store, id) {
   const item = store.get(id);
   if (!item) return [0, 0, 0];
-  return state.period === 'all' ? phases.reduce((sum, phase) => sum.map((n, i) => n + item[phase][i]), [0, 0, 0]) : item[state.period];
+  return phases.slice(...state.span).reduce((sum, phase) => sum.map((n, i) => n + item[phase][i]), [0, 0, 0]);
 }
 const comparison = (store, key) => [values(store, key + '|' + state.first), values(store, key + '|' + state.second)];
 const timeMonth = () => state.months[state.timeIndex];
@@ -398,8 +407,8 @@ function lineChart(lines, W, H, {marker = null, band = true} = {}) {
   const x = (i) => L0 + (W - L0 - R0) * (months.length > 1 ? i / (months.length - 1) : .5), y = (v) => T0 + (H - T0 - B0) * (1 - v / max);
   const index = (m) => months.findIndex(x => x >= m);
   let shade = '';
-  if (band && state.period !== 'all' && !state.timeline) {
-    const [start, end] = phaseMonths[state.period], i0 = Math.max(0, index(start)), i1 = index(end) < 0 ? months.length - 1 : index(end);
+  if (band && state.span[1] - state.span[0] < phases.length && !state.timeline) {
+    const start = phaseMonths[phases[state.span[0]]][0], end = phaseMonths[phases[state.span[1] - 1]][1], i0 = Math.max(0, index(start)), i1 = index(end) < 0 ? months.length - 1 : index(end);
     shade = `<rect x="${x(i0)}" y="${T0}" width="${Math.max(2, x(i1) - x(i0))}" height="${H - T0 - B0}" class="band"/>`;
   }
   // Primary label sits left of its line and Runoff right of its, so the adjacent months don't collide.
@@ -451,7 +460,7 @@ function summary(codes, title, removable, code, W, H) {
 function updatePanel() {
   const side = $('side');
   if (side.hidden || !state.statesByCode) return;
-  const all = Object.keys(state.statesByCode), period = $('period').selectedOptions[0].textContent;
+  const all = Object.keys(state.statesByCode), period = periodLabel();
   $('side-title').textContent = `Itemized receipts · ${period}`;
   // Default width grows for 3+ states; once the user resizes the panel, its own size wins.
   side.classList.toggle('wide', !state.nationwide && state.selected.length >= 3 && window.innerWidth > 1100);
@@ -524,7 +533,7 @@ function highlight(key, on) {
 
 /* Filter panel: histogram and min/max range for a statistic of the places shown. */
 const SLIDER = 1000;
-function filterScope() { return coloredLevel() + '|' + (state.nationwide ? 'US' : state.selected.join(',')) + '|' + state.period + '|' + state.first + '|' + state.second; }
+function filterScope() { return coloredLevel() + '|' + (state.nationwide ? 'US' : state.selected.join(',')) + '|' + state.span.join('-') + '|' + state.first + '|' + state.second; }
 function filterExtent(list, stat) {
   const vals = list.filter(v => v != null && (!stat.log || v > 0));
   if (!vals.length) return null;
@@ -582,7 +591,7 @@ function filterInput(which) {
 function updateDonors() {
   if ($('donors').hidden || !state.statesByCode) return;
   const codes = [...new Set([...state.totals.keys()].map(k => k.split('|')[0]))];
-  $('donors-period').textContent = $('period').selectedOptions[0].textContent;
+  $('donors-period').textContent = periodLabel();
   $('donors-body').innerHTML = order.map(c => {
     const byState = codes.map(code => [code, values(state.totals, code + '|' + c)]).filter(([, v]) => v[0] > 0);
     const total = byState.reduce((s, [, v]) => s + v[0], 0), count = byState.reduce((s, [, v]) => s + v[2], 0);
@@ -747,7 +756,19 @@ async function start() {
   await render();
 }
 
-$('period').addEventListener('change', e => {state.period = e.target.value; refresh();});
+function periodInput(which) {
+  let a = Number($('period-lo').value), b = Number($('period-hi').value);
+  // Handles can't cross or meet: at least one phase stays selected.
+  if (b <= a) { if (which === 'lo') a = b - 1; else b = a + 1; }
+  $('period-lo').value = a; $('period-hi').value = b;
+  state.span = [a, b];
+  $('period-value').textContent = periodLabel();
+  $('period-fill').style.left = (100 * a / phases.length) + '%';
+  $('period-fill').style.right = (100 * (phases.length - b) / phases.length) + '%';
+  refresh();
+}
+$('period-lo').addEventListener('input', () => periodInput('lo'));
+$('period-hi').addEventListener('input', () => periodInput('hi'));
 $('measure').addEventListener('change', async e => {
   state.measure = e.target.value;
   try { await loadLevel(state.level); } catch (error) { showError(error); }

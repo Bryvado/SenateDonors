@@ -21,7 +21,7 @@ Local preview: `python3 -m http.server 8000` from the repo root (not `file://`; 
 ## Layout
 
 ```
-index.html            UI shell: masthead selects (period, compare/with candidates, show states|nationwide, areas level, color by), map buttons (⌂ U.S. overview, US nationwide, zoom, basemap), panel launcher (`.tools`), five floating panels (`#side` Totals, `#rank` Top places, `#donors` Donor map, `#filter` Filter, `#timeline` Timeline), legend (bottom left), footer, About panel, hidden SVG `<defs id="patterns">` filled at runtime
+index.html            UI shell: masthead controls (two-handle Period slider, compare/with candidates, show states|nationwide, areas level, color by), map buttons (⌂ U.S. overview, US nationwide, zoom, basemap), panel launcher (`.tools`), five floating panels (`#side` Totals, `#rank` Top places, `#donors` Donor map, `#filter` Filter, `#timeline` Timeline), legend (bottom left), footer, About panel, hidden SVG `<defs id="patterns">` filled at runtime
 app.js                All client logic (vanilla JS + Leaflet global `L`); side-panel chart is hand-built SVG
 style.css             All styling; responsive breakpoints at 850px and 540px
 vendor/               Leaflet 1.9.4 (js, css, license), vendored, no CDN
@@ -76,7 +76,7 @@ Phases (`phase_for`): `pre_primary` through 2026-03-03, `between_primary_runoff`
 
 ## Front end (`app.js`)
 
-Global `state` object: UI selections (`period` default `all`, `first`, `second`, `measure` lead|volume|capita, `level`, `selected` array of USPS codes (starts empty: the page opens on a U.S. state-level view, no Texas default), `nationwide` bool, `chartMode` monthly|cumulative, `timeline`/`timeIndex`/`timeMode`, `rankBy`) plus Maps: `receipts` keyed `STATE|ZIP|COMMITTEE`, `totals` keyed `STATE|COMMITTEE`, `areas[level]` keyed `GEOID|COMMITTEE`, `unallocated` keyed `LEVEL|STATE|COMMITTEE`, each value `{phase: [dollars, net_dollars, count]}` (cents / 100 on load); `population[level]` Map geoid -> people (loaded for Per 100 residents or when Top places is open); `monthly` Map `STATE|COMMITTEE|YYYY-MM` -> `[dollars, net, count]`, `months` sorted list. Period `all` sums the three phases at read time.
+Global `state` object: UI selections (`span` = [start, end) phase indexes from the masthead's two-handle Period slider, default all three; any contiguous stretch such as "Since Mar 4", `first`, `second`, `measure` lead|volume|capita, `level`, `selected` array of USPS codes (starts empty: the page opens on a U.S. state-level view, no Texas default), `nationwide` bool, `chartMode` monthly|cumulative, `timeline`/`timeIndex`/`timeMode`, `rankBy`) plus Maps: `receipts` keyed `STATE|ZIP|COMMITTEE`, `totals` keyed `STATE|COMMITTEE`, `areas[level]` keyed `GEOID|COMMITTEE`, `unallocated` keyed `LEVEL|STATE|COMMITTEE`, each value `{phase: [dollars, net_dollars, count]}` (cents / 100 on load); `population[level]` Map geoid -> people (loaded for Per 100 residents or when Top places is open); `monthly` Map `STATE|COMMITTEE|YYYY-MM` -> `[dollars, net, count]`, `months` sorted list. `values()` sums the phases in `span` at read time.
 
 Selection model: one area layer (`state.layer`, with `state.index` key -> polygon) rebuilt by `render()` whenever selection, nationwide or level changes (a render token drops stale loads). With nothing selected the map is states only. Plain click on a state (or on an area while nationwide) selects only that state; a single click on an area zooms to it and a quick double click on any area resets to the U.S. view (250 ms timer); Shift/Ctrl/Cmd-click toggles it; × on a card removes it (removing the last returns to the U.S. view); ⌂ clears everything. Nationwide shows the whole country for county/cd/cbsa only (`levels[x].national`); turning it on from ZIP or cousub switches to county. Per-state files (ZCTA, cousub) are tagged with `_state` so ZCTA receipts keep their `STATE|ZIP` key. Multi-state CBSAs are drawn once.
 
@@ -94,8 +94,8 @@ The CSV parser is a plain comma split. That works only because no field is quote
 ## Things that must stay in sync
 
 - Candidate committee IDs and names: `CANDIDATES` in `update_data.py`, `names`/`hues`/`order` in `app.js`, and both `<select>` lists in `index.html`. Adding a candidate touches all three plus the legend logic, which assumes exactly two compared.
-- Phase keys and date cutoffs: `PHASES`/`phase_for` in Python, `phases` in `app.js`, option labels in `index.html` ("Through Mar 3", "Mar 4 – May 26", "Since May 27"), `phaseMonths` in `app.js`.
-- Cache-busting query strings: `app.js?v=12` and `style.css?v=12` in `index.html`, `states.json?v=2`, `zctas/*.bin?v=3` and `levels/geo/*.bin?v=1` in `app.js`. Bump when those files change.
+- Phase keys and date cutoffs: `PHASES`/`phase_for` in Python; `phases`, `phaseMonths`, `phaseEdges`/`periodLabel()` in `app.js`; the Period slider tick labels in `index.html` ("Through Mar 3", "Mar 4 – May 26", "Since May 27").
+- Cache-busting query strings: `app.js?v=13` and `style.css?v=13` in `index.html`, `states.json?v=2`, `zctas/*.bin?v=3` and `levels/geo/*.bin?v=1` in `app.js`. Bump when those files change.
 - The Pages artifact is built by copying `index.html style.css app.js data vendor` only. New top-level assets must be added to the "Prepare static site" step. (This CLAUDE.md is therefore not published.)
 - The workflow's commit step `git add`s the four data outputs plus `data/state_monthly.csv` and `data/levels/*.csv`. A new generated file needs to be added there too.
 - Level keys (`county`, `cd`, `cbsa`, `cousub`): `LEVELS` in `update_data.py`, `levels` in `app.js`, the `#level` select, and the file names in `build_geometry.py`.
