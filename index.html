@@ -6,61 +6,74 @@
   <meta name="theme-color" content="#eff1f2">
   <title>Senate donors · FEC ZIP map</title>
   <link rel="stylesheet" href="vendor/leaflet.css">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=7">
   <script defer src="vendor/leaflet.js"></script>
-  <script defer src="app.js?v=6"></script>
+  <script defer src="app.js?v=7"></script>
 </head>
 <body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="6" height="6" fill="#ebe8e3"/><line x1="0" y1="0" x2="0" y2="6" stroke="#9aa6aa" stroke-width="1.6"/>
+    </pattern></defs>
+  </svg>
   <main id="map" aria-label="Interactive map of itemized Senate campaign contributions"></main>
   <div class="masthead panel">
     <div class="brand" aria-label="Senate donors">SENATE<span> / </span>DONORS</div>
     <div class="separator" aria-hidden="true"></div>
     <label class="control"><span>Period</span>
       <select id="period">
-        <option value="all">All reported</option>
+        <option value="all" selected>All reported</option>
         <option value="pre_primary">Through Mar 3</option>
-        <option value="between_primary_runoff" selected>Mar 4 – May 26</option>
+        <option value="between_primary_runoff">Mar 4 – May 26</option>
         <option value="post_runoff">Since May 27</option>
       </select>
     </label>
-    <label class="control candidate"><span>Blue</span>
+    <label class="control candidate"><span><i class="candidate-dot" data-slot="first"></i>Compare</span>
       <select id="first"><option value="C00919084">Talarico</option><option value="C00369033">Cornyn</option><option value="C00901918">Paxton</option></select>
     </label>
     <span class="versus" aria-hidden="true">vs</span>
-    <label class="control candidate"><span>Red</span>
+    <label class="control candidate"><span><i class="candidate-dot" data-slot="second"></i>With</span>
       <select id="second"><option value="C00901918">Paxton</option><option value="C00369033">Cornyn</option><option value="C00919084">Talarico</option></select>
     </label>
-    <label class="control"><span>Level</span>
+    <label class="control"><span>Show</span>
+      <select id="view"><option value="states">Selected states</option><option value="nation">Nationwide</option></select>
+    </label>
+    <label class="control"><span>Areas</span>
       <select id="level">
         <option value="zcta" selected>ZIP (ZCTA)</option>
         <option value="county">County</option>
-        <option value="cd">Cong. district</option>
-        <option value="cbsa">Metro area</option>
+        <option value="cd">Congressional district</option>
+        <option value="cbsa">Metro/micro area</option>
         <option value="cousub">County subdivision</option>
       </select>
     </label>
-    <label class="control"><span>Color</span>
-      <select id="measure"><option value="lead">Dominance</option><option value="volume">Combined $</option></select>
+    <label class="control"><span>Color by</span>
+      <select id="measure"><option value="lead">Who led</option><option value="volume">Total raised</option><option value="capita">Per 100 residents</option></select>
     </label>
     <button id="about-toggle" class="icon" title="Sources and methods" aria-label="Sources and methods" aria-expanded="false">i</button>
   </div>
   <div class="map-actions panel" aria-label="Map controls">
-    <button id="home" title="Return to Texas" aria-label="Return to Texas">TX</button>
-    <button id="nation" title="View all states" aria-label="View all states">US</button>
+    <button id="home" title="Show Texas" aria-label="Show Texas">TX</button>
+    <button id="nation" title="Nationwide view" aria-label="Nationwide view" aria-pressed="false">US</button>
     <button id="zoom-in" title="Zoom in" aria-label="Zoom in">+</button>
     <button id="zoom-out" title="Zoom out" aria-label="Zoom out">−</button>
     <button id="tiles" title="Toggle USGS basemap" aria-label="Toggle USGS basemap" aria-pressed="true">▧</button>
   </div>
+  <aside class="side panel" id="side" aria-label="Selected states">
+    <button id="side-toggle" class="side-toggle" aria-expanded="true" aria-controls="cards">Totals</button>
+    <div id="cards"></div>
+    <select id="add-state" class="add-state" aria-label="Add a state"></select>
+  </aside>
   <div class="legend panel" id="legend" aria-live="polite"></div>
   <div class="foot panel" id="foot" aria-live="polite"><span id="scope">Loading map…</span><span id="coverage"></span></div>
   <aside class="about panel" id="about" hidden aria-label="Data sources and methods">
     <button class="close" id="about-close" aria-label="Close sources and methods">×</button>
     <h1>About this map</h1>
-    <p>Positive itemized individual receipts from the principal federal campaign committees of James Talarico, John Cornyn, and Ken Paxton. Receipt dates define the periods. Amendments replace superseded reports.</p>
-    <p>Color compares <strong>dollars received</strong> at a reported contributor ZIP. Outlines are 2020 Census ZIP Code Tabulation Areas (ZCTAs), which do not match every mailing ZIP. Unitemized contributions and ZIPs without a matching ZCTA are absent from the local shading. State totals include their reported ZIPs, including those without a ZCTA.</p>
-    <p>The County, Cong. district, Metro area, and County subdivision levels apportion each reported ZIP's totals among the areas it overlaps, using the share of the ZIP's residential addresses in each area (all addresses for ZIPs with none) from the HUD USPS ZIP crosswalk (June 2026). Area totals and entry counts there are therefore <strong>estimates</strong>. ZIPs outside the crosswalk and non-metro or unassigned portions are left out of the shading, but state totals still include them. Congressional districts are the 119th Congress districts, which the HUD crosswalk uses; Texas's 2025 mid-decade plan is not shown.</p>
-    <p>Hover for dollar amounts and contribution entries. Click a state to open its ZCTAs. Double-click a state or its ZCTAs to hide that detail. Colors can be strong even where only a small amount was given.</p>
-    <div class="links"><a href="data/receipts.csv" download>Download ZIP totals ↗</a><a href="data/state_totals.csv" download>State totals ↗</a><a href="data/levels/county.csv" download>County estimates ↗</a><a href="https://www.huduser.gov/portal/datasets/usps_crosswalk.html" target="_blank" rel="noopener">HUD crosswalk ↗</a><a href="https://www.fec.gov/data/" target="_blank" rel="noopener">FEC ↗</a><a href="https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.2020.html" target="_blank" rel="noopener">Census geometry ↗</a></div>
+    <p>Itemized contributions from individuals to the principal federal campaign committees of James Talarico, John Cornyn, and Ken Paxton, placed at each contributor's reported ZIP. Receipt dates define the periods. Amendments replace superseded reports. Unitemized contributions (generally $200 or less per donor per election) are not included.</p>
+    <p><strong>Who led</strong> shows the first candidate's share of the two compared candidates' dollars in five steps. Places with less than a set combined amount ($250 for ZIPs and county subdivisions, $1,000 for counties and metro areas, $5,000 for districts, $10,000 for states) are hatched rather than called. <strong>Total raised</strong> is the pair's combined dollars. <strong>Per 100 residents</strong> divides that by ACS 2020–2024 population and hatches places with fewer than 1,000 residents. Contribution counts are entries, not unique donors.</p>
+    <p>ZIP outlines are 2020 Census ZIP Code Tabulation Areas (ZCTAs), which do not match every mailing ZIP. The County, Congressional district, Metro/micro area, and County subdivision views apportion each reported ZIP's totals among the areas it overlaps, using the share of the ZIP's residential addresses in each area (all addresses for ZIPs with none) from the HUD USPS ZIP crosswalk (June 2026). Amounts and counts there are <strong>estimates</strong>. ZIPs outside the crosswalk and non-metro or unassigned portions are left out of the shading, but state totals still include them. Congressional districts are the 119th Congress districts, which the HUD crosswalk uses; Texas's 2025 mid-decade plan is not shown.</p>
+    <p>Click a state to show it alone; Shift-, Ctrl- or ⌘-click (or “Add state”) to compare several. The side panel shows each selected state's totals and monthly receipts. Nationwide view is available for counties, districts, and metro areas.</p>
+    <div class="links"><a href="data/receipts.csv" download>ZIP totals ↗</a><a href="data/state_totals.csv" download>State totals ↗</a><a href="data/levels/county.csv" download>County estimates ↗</a><a href="https://www.fec.gov/data/" target="_blank" rel="noopener">FEC ↗</a><a href="https://www.huduser.gov/portal/datasets/usps_crosswalk.html" target="_blank" rel="noopener">HUD crosswalk ↗</a><a href="https://www.census.gov/programs-surveys/acs/data/summary-file.html" target="_blank" rel="noopener">ACS population ↗</a></div>
     <p class="small">No individual names or addresses are published here. Filing updates are checked every six hours; the display changes only after the FEC files a new or amended report and the totals pass reconciliation.</p>
   </aside>
   <div id="error" class="error panel" role="alert" hidden></div>

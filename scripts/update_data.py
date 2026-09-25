@@ -22,6 +22,7 @@ from pathlib import Path
 CANDIDATES = {"C00919084": "James Talarico", "C00369033": "John Cornyn", "C00901918": "Ken Paxton"}
 PHASES = ("pre_primary", "between_primary_runoff", "post_runoff")
 HEADER = ("state", "zip", "candidate", "phase", "positive_cents", "net_cents", "count")
+MONTH_HEADER = ("state", "candidate", "month", "positive_cents", "net_cents", "count")
 START = date(2025, 1, 1)
 # Map level -> (HUD crosswalk CSV, pattern a mappable geoid must match).
 LEVELS = {"county": ("ZIP-COUNTY.csv", r"\d{5}"), "cd": ("ZIP-CD.csv", r"\d{4}"),
@@ -77,7 +78,7 @@ def cents(value):
     return int((Decimal(str(value)) * 100).quantize(Decimal("1")))
 
 
-def parse_report(report, committee, data, states, transaction_ids):
+def parse_report(report, committee, data, states, transaction_ids, months):
     file_number = report["file_number"]
     expected = cents(report["individual_itemized_contributions_period"])
     url = report["csv_url"]
@@ -120,11 +121,10 @@ def parse_report(report, committee, data, states, transaction_ids):
             if not re.fullmatch(r"[A-Z]{2}", state):
                 continue
             zip5 = row[16].strip()[:5]
-            key = (state, committee, phase)
-            bucket = states[key]
-            bucket[0] += max(0, amount)
-            bucket[1] += amount
-            bucket[2] += amount > 0
+            for bucket in (states[state, committee, phase], months[state, committee, day.strftime("%Y-%m")]):
+                bucket[0] += max(0, amount)
+                bucket[1] += amount
+                bucket[2] += amount > 0
             if re.fullmatch(r"\d{5}", zip5):
                 bucket = data[state, zip5, committee, phase]
                 bucket[0] += max(0, amount)
@@ -138,12 +138,15 @@ def parse_report(report, committee, data, states, transaction_ids):
             "itemized_cents": total}
 
 
-def write_data(out, data, states, meta, filings):
+def write_data(out, data, states, meta, filings, months=None):
     out.mkdir(parents=True, exist_ok=True)
-    for filename, values in (("receipts.csv", data), ("state_totals.csv", states)):
+    outputs = [("receipts.csv", data, HEADER), ("state_totals.csv", states, ("state", "candidate", "phase", *HEADER[-3:]))]
+    if months is not None:
+        outputs.append(("state_monthly.csv", months, MONTH_HEADER))
+    for filename, values, header in outputs:
         with (out / filename).open("w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(HEADER if filename == "receipts.csv" else ("state", "candidate", "phase", *HEADER[-3:]))
+            writer.writerow(header)
             writer.writerows((*key, *value) for key, value in sorted(values.items()))
     (out / "coverage.json").write_text(json.dumps(meta, indent=2) + "\n")
     (out / "filings.json").write_text(json.dumps(filings, indent=2) + "\n")
@@ -222,16 +225,21 @@ def allocate_levels(receipts_csv, crosswalks, out):
 LEVEL_FILES = [f"levels/{level}.csv" for level in LEVELS] + ["levels/unallocated.csv"]
 
 
-def publish(data, states, meta, filings, out):
-    """Stage every output in a temp dir, then replace the tracked files."""
+def publish(data, states, meta, filings, out, months=None):
+    """Stage every output in a temp dir, then replace the tracked files.
+
+    months (state, candidate, YYYY-MM totals) needs receipt dates; seed.py has
+    none, so it leaves the existing state_monthly.csv in place.
+    """
     meta = {**meta, "cd_vintage": CD_VINTAGE,
             "levels": "ZIP totals apportioned by HUD USPS ZIP crosswalk residential address shares (06/2026)"}
     with tempfile.TemporaryDirectory() as temp:
         staged = Path(temp)
-        write_data(staged, data, states, meta, filings)
+        write_data(staged, data, states, meta, filings, months)
         allocate_levels(staged / "receipts.csv", out / "crosswalks", staged / "levels")
         (out / "levels").mkdir(exist_ok=True)
-        for filename in ("receipts.csv", "state_totals.csv", "coverage.json", "filings.json", *LEVEL_FILES):
+        monthly = ["state_monthly.csv"] if months is not None else []
+        for filename in ("receipts.csv", "state_totals.csv", "coverage.json", "filings.json", *monthly, *LEVEL_FILES):
             os.replace(staged / filename, out / filename)
 
 
@@ -252,23 +260,26 @@ def main():
     key = os.environ.get("FEC_API_KEY") or "DEMO_KEY"
     inventories = inventory(key)
     current = out / "filings.json"
-    if current.exists() and json.loads(current.read_text()).get("committees") == signature(inventories):
+    # A missing state_monthly.csv forces one rebuild even if no filing changed.
+    if (current.exists() and (out / "state_monthly.csv").exists()
+            and json.loads(current.read_text()).get("committees") == signature(inventories)):
         print("FEC filing inventory unchanged")
         return
     data = defaultdict(lambda: [0, 0, 0])
     states = defaultdict(lambda: [0, 0, 0])
+    months = defaultdict(lambda: [0, 0, 0])
     audit = []
     for committee, reports in inventories.items():
         ids = set()
         for report in sorted(reports, key=lambda r: r["file_number"]):
-            record = parse_report(report, committee, data, states, ids)
+            record = parse_report(report, committee, data, states, ids, months)
             audit.append(record)
             print(committee, record["file_number"], "reconciled", flush=True)
     meta = {"retrieved": datetime.now(timezone.utc).date().isoformat(), "coverage_start": START.isoformat(),
             "coverage_end": max(r["coverage_end"] for r in audit), "filing_count": len(audit),
             "source": "FEC electronic filings", "geography": "Reported contributor state and ZIP matched to 2020 Census ZCTA"}
     # Validate the entire new snapshot before replacing any tracked output.
-    publish(data, states, meta, {"committees": signature(inventories), "reports": audit}, out)
+    publish(data, states, meta, {"committees": signature(inventories), "reports": audit}, out, months)
     print("Published through", meta["coverage_end"])
 
 
