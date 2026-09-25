@@ -21,18 +21,21 @@ Local preview: `python3 -m http.server 8000` from the repo root (not `file://`; 
 ## Layout
 
 ```
-index.html            UI shell: masthead selects (period, two candidates, color measure), map buttons, legend, footer, About panel
-app.js                All client logic (~11 KB, vanilla JS + Leaflet global `L`)
+index.html            UI shell: masthead selects (period, compare/with candidates, show states|nationwide, areas level, color by), map buttons, side panel (#side: per-state cards + Add state), legend (bottom left), footer, About panel, hidden SVG <pattern id="hatch">
+app.js                All client logic (vanilla JS + Leaflet global `L`); side-panel chart is hand-built SVG
 style.css             All styling; responsive breakpoints at 850px and 540px
 vendor/               Leaflet 1.9.4 (js, css, license), vendored, no CDN
 scripts/
   update_data.py      FEC refresh + reconciliation + level allocation; writes all tracked data outputs. `--levels-only` regenerates data/levels/*.csv from the current receipts.csv
   seed.py             One-time rebuild of aggregates from an external audited bundle; imports publish() from update_data.py
   convert_crosswalks.py  Stdlib xlsx -> CSV converter for the HUD crosswalk workbooks
+  build_population.py Stdlib; writes data/population/*.csv from the ACS 5-year summary-file table B01003 (no API key)
   build_geometry.py   Rebuilds states.json, zctas/*.bin and levels/geo/* from Census archives (geopandas); every input flag is optional
 data/
   receipts.csv        state,zip,candidate,phase,positive_cents,net_cents,count   (~24.6k rows, CRLF)
   state_totals.csv    state,candidate,phase,positive_cents,net_cents,count       (~410 rows, includes unmappable ZIPs)
+  state_monthly.csv   state,candidate,month(YYYY-MM),positive_cents,net_cents,count; written only by the FEC refresh (needs receipt dates). May be absent; the app then says monthly totals are pending
+  population/{state,zcta,county,cd,cbsa,cousub}.csv   geoid,population (ACS 2020-2024). Static; not touched by the refresh
   coverage.json       retrieved date, coverage_start/end, filing_count, source strings
   filings.json        {committees: {id: [file_numbers]}, reports: [...]}; the committees map is the change-detection signature
   states.json         Simplified state polygons, properties {code, name}
@@ -48,11 +51,12 @@ data/
 ## Data pipeline (`scripts/update_data.py`)
 
 1. `inventory()`: OpenFEC `/v1/reports/house-senate/` per committee, cycle 2026, keeps `most_recent`, e-filed reports with a `csv_url` and coverage ending on or after 2025-01-01. `FEC_API_KEY` env var, else `DEMO_KEY`.
-2. If the sorted file-number signature equals `filings.json["committees"]`, exit with no changes.
+2. If the sorted file-number signature equals `filings.json["committees"]` and `state_monthly.csv` exists, exit with no changes. A missing monthly file forces one full rebuild.
 3. `parse_report()`: streams each FEC CSV (host must be `docquery.fec.gov`) to a temp file, keeps `SA11AI` rows, drops memo rows (col 42 == `X`). Every non-memo SA11AI amount counts toward the reconciliation total; only entity `IND` rows are aggregated. Raises if the sum differs from `individual_itemized_contributions_period` or if a transaction ID repeats within a committee.
 4. Column indices used: 1 committee, 2 transaction ID, 5 entity type, 15 state, 16 ZIP, 19 date (YYYYMMDD), 20 amount, 42 memo code.
-5. Aggregates in integer cents into `[positive_cents, net_cents, count]`, where count = positive entries (not unique donors). Negative receipts affect `net_cents` only; Schedule B refunds are not subtracted.
-6. `publish()` writes all outputs to a temp dir, runs `allocate_levels()` on the staged `receipts.csv`, then `os.replace`s everything into `data/`, so a failure leaves tracked data untouched. `seed.py` goes through the same function.
+5. Also accumulates `months[state, committee, YYYY-MM]` for every IND row with a valid state (same rows as state_totals, so their sums match exactly).
+6. Aggregates in integer cents into `[positive_cents, net_cents, count]`, where count = positive entries (not unique donors). Negative receipts affect `net_cents` only; Schedule B refunds are not subtracted.
+7. `publish()` writes all outputs to a temp dir, runs `allocate_levels()` on the staged `receipts.csv`, then `os.replace`s everything into `data/`, so a failure leaves tracked data untouched. `seed.py` goes through the same function but passes no months, so it leaves `state_monthly.csv` alone.
 
 ### Level allocation (`allocate_levels`)
 
@@ -72,23 +76,23 @@ Phases (`phase_for`): `pre_primary` through 2026-03-03, `between_primary_runoff`
 
 ## Front end (`app.js`)
 
-Global `state` object holds UI selections plus Maps: `receipts` keyed `STATE|ZIP|COMMITTEE`, `totals` keyed `STATE|COMMITTEE`, each value `{phase: [dollars, net_dollars, count]}` (cents divided by 100 on load). Period `all` sums the three phases at read time.
+Global `state` object: UI selections (`period` default `all`, `first`, `second`, `measure` lead|volume|capita, `level`, `selected` array of USPS codes, `nationwide` bool) plus Maps: `receipts` keyed `STATE|ZIP|COMMITTEE`, `totals` keyed `STATE|COMMITTEE`, `areas[level]` keyed `GEOID|COMMITTEE`, `unallocated` keyed `LEVEL|STATE|COMMITTEE`, each value `{phase: [dollars, net_dollars, count]}` (cents / 100 on load); `population[level]` Map geoid -> people (loaded only for Per 100 residents); `monthly` Map `STATE|COMMITTEE|YYYY-MM` -> dollars. Period `all` sums the three phases at read time.
 
-Startup loads `states.json`, both CSVs, and `coverage.json`, draws states, then opens TX. `openState(code)` fetches `data/zctas/CODE.bin`, decompresses via `DecompressionStream('gzip')`, and adds a GeoJSON layer; `closeState` removes it. Single click vs double click is disambiguated with a 230 ms timeout.
+Selection model: one area layer (`state.layer`) rebuilt by `render()` whenever selection, nationwide or level changes (a render token drops stale loads). Plain click on a state (or on an area while nationwide) selects only that state; Shift/Ctrl/Cmd-click toggles it into the selection; the side panel's × and "Add state" do the same. Nationwide shows the whole country for county/cd/cbsa only (`levels[x].national`); turning it on from ZIP or cousub switches to county, and those two options are disabled while nationwide. Per-state files (ZCTA, cousub) are tagged with `_state` so ZCTA receipts keep their `STATE|ZIP` key. Multi-state CBSAs are drawn once.
 
-Coloring (`color()`): "lead"/Dominance blends red (#ac3546) to neutral to blue (#246a93) by the first candidate's share of positive dollars, with opacity scaled by log total; "volume" uses a log ramp from `levels[level].range` (log10 dollars: ZCTA and cousub $0–$100k, county and CBSA $100–$1m, CD $3k–$3m; states $10k–$10m). Gray = no receipts. Shading always uses `positive_cents`.
+Shading (`classify()`): candidate colors are fixed per candidate everywhere (`hues`: Talarico #246a93, Cornyn #b07d12, Paxton #ac3546; pairs checked with the dataviz palette validator). "Who led" = 5 steps of first-candidate share (<20, 20-40, 40-60, 60-80, 80+%) between the two hues through a neutral; combined dollars under `levels[x].floor` ($250 ZCTA/cousub, $1k county/CBSA, $5k CD, $10k state) get the SVG hatch instead. "Total raised" = 5 single-hue classes at `levels[x].breaks`. "Per 100 residents" = same ramp at $1/$5/$20/$100, hatched below 1,000 residents or with no population (island areas). No receipts = pale `EMPTY` at low opacity. Unselected states are shaded at state level; selected ones are outline-only.
 
-Levels: `levels` object in `app.js` and the `#level` select. `state.level` picks the layer drawn when a state is opened; switching level closes and reopens the open states. Non-ZIP data loads lazily into `state.areas[level]` keyed `GEOID|COMMITTEE`, and `levels/unallocated.csv` into `state.unallocated` keyed `LEVEL|STATE|COMMITTEE` (shown in the state tooltip). County/CD/CBSA geometry loads once nationally and is filtered by the feature's `states` list, so a multi-state CBSA appears under each open state; cousub loads per state. Non-ZIP tooltips say "estimated entries".
+Side panel: one card per selected state (or one "United States" card when nationwide) with period totals for all three candidates and a monthly line chart (all three candidates, primary/runoff markers, selected period band, hover crosshair). Collapses to a bottom drawer under 850px.
 
 The CSV parser is a plain comma split. That works only because no field is quoted; keep outputs quote-free or replace the parser.
 
 ## Things that must stay in sync
 
-- Candidate committee IDs and names: `CANDIDATES` in `update_data.py`, `names` in `app.js`, and both `<select>` lists in `index.html`. Adding a candidate touches all three plus the legend logic, which assumes exactly two compared.
-- Phase keys and date cutoffs: `PHASES`/`phase_for` in Python, `phases` in `app.js`, option labels in `index.html` ("Through Mar 3", "Mar 4 – May 26", "Since May 27").
-- Cache-busting query strings: `app.js?v=6` in `index.html`, `states.json?v=2`, `zctas/*.bin?v=3` and `levels/geo/*.bin?v=1` in `app.js`. Bump when those files change.
+- Candidate committee IDs and names: `CANDIDATES` in `update_data.py`, `names`/`hues`/`order` in `app.js`, and both `<select>` lists in `index.html`. Adding a candidate touches all three plus the legend logic, which assumes exactly two compared.
+- Phase keys and date cutoffs: `PHASES`/`phase_for` in Python, `phases` in `app.js`, option labels in `index.html` ("Through Mar 3", "Mar 4 – May 26", "Since May 27"), `phaseMonths` in `app.js`.
+- Cache-busting query strings: `app.js?v=7` and `style.css?v=7` in `index.html`, `states.json?v=2`, `zctas/*.bin?v=3` and `levels/geo/*.bin?v=1` in `app.js`. Bump when those files change.
 - The Pages artifact is built by copying `index.html style.css app.js data vendor` only. New top-level assets must be added to the "Prepare static site" step. (This CLAUDE.md is therefore not published.)
-- The workflow's commit step `git add`s the four data outputs plus `data/levels/*.csv`. A new generated file needs to be added there too.
+- The workflow's commit step `git add`s the four data outputs plus `data/state_monthly.csv` and `data/levels/*.csv`. A new generated file needs to be added there too.
 - Level keys (`county`, `cd`, `cbsa`, `cousub`): `LEVELS` in `update_data.py`, `levels` in `app.js`, the `#level` select, and the file names in `build_geometry.py`.
 
 ## Geography caveats (relevant to correctness work)
