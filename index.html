@@ -6,15 +6,13 @@
   <meta name="theme-color" content="#eff1f2">
   <title>Senate donors · FEC ZIP map</title>
   <link rel="stylesheet" href="vendor/leaflet.css">
-  <link rel="stylesheet" href="style.css?v=8">
+  <link rel="stylesheet" href="style.css?v=9">
   <script defer src="vendor/leaflet.js"></script>
-  <script defer src="app.js?v=8"></script>
+  <script defer src="app.js?v=9"></script>
 </head>
 <body>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
-    <defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-      <rect width="6" height="6" fill="#ebe8e3"/><line x1="0" y1="0" x2="0" y2="6" stroke="#9aa6aa" stroke-width="1.6"/>
-    </pattern></defs>
+    <defs id="patterns"></defs>
   </svg>
   <main id="map" aria-label="Interactive map of itemized Senate campaign contributions"></main>
   <div class="masthead panel">
@@ -70,7 +68,7 @@
     <button class="close" id="about-close" aria-label="Close sources and methods">×</button>
     <h1>About this map</h1>
     <p>Itemized contributions from individuals to the principal federal campaign committees of James Talarico, John Cornyn, and Ken Paxton, placed at each contributor's reported ZIP. Receipt dates define the periods. Amendments replace superseded reports. Unitemized contributions (generally $200 or less per donor per election) are not included.</p>
-    <p><strong>Who led</strong> shows the first candidate's share of the two compared candidates' dollars in five steps. Places with less than a set combined amount ($250 for ZIPs and county subdivisions, $1,000 for counties and metro areas, $5,000 for districts, $10,000 for states) are hatched rather than called. <strong>Total raised</strong> is the pair's combined dollars. <strong>Per 100 residents</strong> divides that by ACS 2020–2024 population and hatches places with fewer than 1,000 residents. Contribution counts are entries, not unique donors.</p>
+    <p><strong>Who led</strong> shows the first candidate's share of the two compared candidates' dollars in five steps. Places with less than a set combined amount ($250 for ZIPs and county subdivisions, $1,000 for counties and metro areas, $5,000 for districts, $10,000 for states) keep the color of whoever led but are hatched to mark them as too little to call. <strong>Total raised</strong> is the pair's combined dollars. <strong>Per 100 residents</strong> divides that by ACS 2020–2024 population and hatches places with fewer than 1,000 residents (still shaded by their rate). Contribution counts are entries, not unique donors.</p>
     <p>ZIP outlines are 2020 Census ZIP Code Tabulation Areas (ZCTAs), which do not match every mailing ZIP. The County, Congressional district, Metro/micro area, and County subdivision views apportion each reported ZIP's totals among the areas it overlaps, using the share of the ZIP's residential addresses in each area (all addresses for ZIPs with none) from the HUD USPS ZIP crosswalk (June 2026). Amounts and counts there are <strong>estimates</strong>. ZIPs outside the crosswalk and non-metro or unassigned portions are left out of the shading, but state totals still include them. Congressional districts are the 119th Congress districts, which the HUD crosswalk uses; Texas's 2025 mid-decade plan is not shown.</p>
     <p>Click a state to show it alone; Shift-, Ctrl- or ⌘-click (or “Add state”) to compare several. The side panel shows each selected state's totals and monthly receipts. Nationwide view is available for counties, districts, and metro areas.</p>
     <div class="links"><a href="data/receipts.csv" download>ZIP totals ↗</a><a href="data/state_totals.csv" download>State totals ↗</a><a href="data/levels/county.csv" download>County estimates ↗</a><a href="https://www.fec.gov/data/" target="_blank" rel="noopener">FEC ↗</a><a href="https://www.huduser.gov/portal/datasets/usps_crosswalk.html" target="_blank" rel="noopener">HUD crosswalk ↗</a><a href="https://www.census.gov/programs-surveys/acs/data/summary-file.html" target="_blank" rel="noopener">ACS population ↗</a></div>

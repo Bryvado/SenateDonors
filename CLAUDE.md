@@ -21,7 +21,7 @@ Local preview: `python3 -m http.server 8000` from the repo root (not `file://`; 
 ## Layout
 
 ```
-index.html            UI shell: masthead selects (period, compare/with candidates, show states|nationwide, areas level, color by), map buttons, side panel (#side: per-state cards + Add state), legend (bottom left), footer, About panel, hidden SVG <pattern id="hatch">
+index.html            UI shell: masthead selects (period, compare/with candidates, show states|nationwide, areas level, color by), map buttons, side panel (#side: per-state cards + Add state), legend (bottom left), footer, About panel, hidden SVG `<defs id="patterns">` filled at runtime
 app.js                All client logic (vanilla JS + Leaflet global `L`); side-panel chart is hand-built SVG
 style.css             All styling; responsive breakpoints at 850px and 540px
 vendor/               Leaflet 1.9.4 (js, css, license), vendored, no CDN
@@ -80,7 +80,7 @@ Global `state` object: UI selections (`period` default `all`, `first`, `second`,
 
 Selection model: one area layer (`state.layer`) rebuilt by `render()` whenever selection, nationwide or level changes (a render token drops stale loads). Plain click on a state (or on an area while nationwide) selects only that state; Shift/Ctrl/Cmd-click toggles it into the selection; the side panel's × and "Add state" do the same. Nationwide shows the whole country for county/cd/cbsa only (`levels[x].national`); turning it on from ZIP or cousub switches to county, and those two options are disabled while nationwide. Per-state files (ZCTA, cousub) are tagged with `_state` so ZCTA receipts keep their `STATE|ZIP` key. Multi-state CBSAs are drawn once.
 
-Shading (`classify()`): candidate colors are fixed per candidate everywhere (`hues`: Talarico #246a93, Cornyn #b07d12, Paxton #ac3546; pairs checked with the dataviz palette validator). "Who led" = 5 steps of first-candidate share (<20, 20-40, 40-60, 60-80, 80+%) between the two hues through a neutral; combined dollars under `levels[x].floor` ($250 ZCTA/cousub, $1k county/CBSA, $5k CD, $10k state) get the SVG hatch instead. "Total raised" = 5 single-hue classes at `levels[x].breaks`. "Per 100 residents" = same ramp at $1/$5/$20/$100, hatched below 1,000 residents or with no population (island areas). No receipts = pale `EMPTY` at low opacity. Unselected states are shaded at state level; selected ones are outline-only.
+Shading (`classify()`): candidate colors are fixed per candidate everywhere (`hues`: Talarico #246a93, Cornyn #b07d12, Paxton #ac3546; pairs checked with the dataviz palette validator). "Who led" = 5 steps of first-candidate share (<20, 20-40, 40-60, 60-80, 80+%) between the two hues through a neutral; combined dollars under `levels[x].floor` ($250 ZCTA/cousub, $1k county/CBSA, $5k CD, $10k state) keep their class color with pale stripes over it (`hatched(color)` builds one SVG pattern per color into `<defs id="patterns">`). "Total raised" = 5 single-hue classes at `levels[x].breaks`. "Per 100 residents" = same ramp at $1/$5/$20/$100, shaded by rate but hatched below 1,000 residents; gray hatch with no population (island areas). No receipts = pale `EMPTY` at low opacity. Unselected states are shaded at state level; selected ones are outline-only.
 
 Side panel: one card per selected state, plus an "All selected" sum card on top when 2+ are selected (or one "United States" card when nationwide); the Add state list starts with "All states (nationwide)" with period totals for all three candidates and a monthly line chart (all three candidates, primary/runoff markers, selected period band, hover crosshair). The panel sizes to its content (width scales with the window; `.wide` two-column grid when 3+ states are selected above 1100px) and collapses from its header on any screen; under 850px it is a bottom drawer that starts collapsed.
 
@@ -90,7 +90,7 @@ The CSV parser is a plain comma split. That works only because no field is quote
 
 - Candidate committee IDs and names: `CANDIDATES` in `update_data.py`, `names`/`hues`/`order` in `app.js`, and both `<select>` lists in `index.html`. Adding a candidate touches all three plus the legend logic, which assumes exactly two compared.
 - Phase keys and date cutoffs: `PHASES`/`phase_for` in Python, `phases` in `app.js`, option labels in `index.html` ("Through Mar 3", "Mar 4 – May 26", "Since May 27"), `phaseMonths` in `app.js`.
-- Cache-busting query strings: `app.js?v=8` and `style.css?v=8` in `index.html`, `states.json?v=2`, `zctas/*.bin?v=3` and `levels/geo/*.bin?v=1` in `app.js`. Bump when those files change.
+- Cache-busting query strings: `app.js?v=9` and `style.css?v=9` in `index.html`, `states.json?v=2`, `zctas/*.bin?v=3` and `levels/geo/*.bin?v=1` in `app.js`. Bump when those files change.
 - The Pages artifact is built by copying `index.html style.css app.js data vendor` only. New top-level assets must be added to the "Prepare static site" step. (This CLAUDE.md is therefore not published.)
 - The workflow's commit step `git add`s the four data outputs plus `data/state_monthly.csv` and `data/levels/*.csv`. A new generated file needs to be added there too.
 - Level keys (`county`, `cd`, `cbsa`, `cousub`): `LEVELS` in `update_data.py`, `levels` in `app.js`, the `#level` select, and the file names in `build_geometry.py`.

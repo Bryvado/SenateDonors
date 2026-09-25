@@ -71,7 +71,7 @@ function hexBlend(a, b, ratio) {
 const bin = (value, breaks) => breaks.filter(b => value >= b).length;
 
 /* Shading. "Who led" is five steps of the first candidate's share of the pair's dollars;
-   areas under the level's dollar floor are hatched instead of called. "Total raised" and
+   areas under the level's dollar floor keep their color but are hatched as too little to call. "Total raised" and
    "Per 100 residents" are five-step single-hue classes. */
 function leadClasses() {
   const a = hues[state.first], b = hues[state.second];
@@ -82,11 +82,24 @@ function classify(amounts, level, population) {
   if (total <= 0) return {fill: EMPTY, kind: 'empty'};
   if (state.measure === 'volume') return {fill: ramp[bin(total, spec.breaks)], kind: 'value'};
   if (state.measure === 'capita') {
-    if (!population || population < spec.minPop) return {fill: 'url(#hatch)', kind: 'thin'};
-    return {fill: ramp[bin(100 * total / population, perCapitaBreaks)], kind: 'value'};
+    if (!population) return {fill: hatched('#d9d5cf'), kind: 'thin'};
+    const color = ramp[bin(100 * total / population, perCapitaBreaks)];
+    return population < spec.minPop ? {fill: hatched(color), kind: 'thin'} : {fill: color, kind: 'value'};
   }
-  if (total < spec.floor) return {fill: 'url(#hatch)', kind: 'thin'};
-  return {fill: leadClasses()[bin(a / total, [.2, .4, .6, .8])], kind: 'value'};
+  const color = leadClasses()[bin(a / total, [.2, .4, .6, .8])];
+  return total < spec.floor ? {fill: hatched(color), kind: 'thin'} : {fill: color, kind: 'value'};
+}
+// One SVG pattern per base color: the class color with pale diagonal stripes over it.
+function hatched(color) {
+  const id = 'hatch-' + color.slice(1);
+  if (!document.getElementById(id)) {
+    const pattern = document.createElementNS('http://www.w3.org/2000/svg', 'pattern');
+    pattern.id = id;
+    for (const [k, v] of Object.entries({width: 6, height: 6, patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)'})) pattern.setAttribute(k, v);
+    pattern.innerHTML = `<rect width="6" height="6" fill="${color}"/><line x1="1.5" y1="0" x2="1.5" y2="6" stroke="#fbfaf8" stroke-width="2.2" stroke-opacity=".85"/>`;
+    $('patterns').appendChild(pattern);
+  }
+  return `url(#${id})`;
 }
 function paint(amounts, level, population) {
   const {fill, kind} = classify(amounts, level, population);
@@ -235,17 +248,18 @@ function updateScope(loading) {
 /* Legend */
 function updateLegend() {
   const spec = levels[state.level], swatches = (colors) => colors.map(c => `<span style="background:${c}"></span>`).join('');
-  const hatch = '<span class="swatch hatch"></span>', empty = `<span class="swatch" style="background:${EMPTY}"></span>`;
+  const stripe = (color) => `<span class="swatch hatch" style="background-color:${color}"></span>`;
+  const hatch = state.measure === 'lead' ? stripe(hues[state.first]) + stripe(hues[state.second]) : stripe(ramp[2]), empty = `<span class="swatch" style="background:${EMPTY}"></span>`;
   let html;
   if (state.measure === 'lead') {
     html = `<div class="legend-title">Who led in itemized dollars</div><div class="steps">${swatches(leadClasses())}</div>` +
       `<div class="ticks"><span>${names[state.second]} 80%+</span><span>Even</span><span>${names[state.first]} 80%+</span></div>` +
-      `<div class="legend-note">${hatch}Under ${short(spec.floor)} combined ${empty}None</div>`;
+      `<div class="legend-note">${hatch}Under ${short(spec.floor)} combined · too little to call ${empty}None</div>`;
   } else {
     const capita = state.measure === 'capita', breaks = capita ? perCapitaBreaks : spec.breaks;
     html = `<div class="legend-title">${capita ? 'Dollars per 100 residents' : 'Total raised'} · ${names[state.first]} + ${names[state.second]}</div>` +
       `<div class="steps">${swatches(ramp)}</div><div class="ticks">${breaks.map(b => `<span>${short(b)}</span>`).join('')}</div>` +
-      `<div class="legend-note">${capita ? `${hatch}Under ${spec.minPop.toLocaleString()} residents ` : ''}${empty}None</div>`;
+      `<div class="legend-note">${capita ? `${hatch}Under ${spec.minPop.toLocaleString()} residents · unstable rate ` : ''}${empty}None</div>`;
   }
   if (state.level !== 'zcta') html += '<div class="legend-note">Area amounts are estimates apportioned from ZIPs</div>';
   $('legend').innerHTML = html;
