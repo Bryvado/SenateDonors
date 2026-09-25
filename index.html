@@ -6,9 +6,9 @@
   <meta name="theme-color" content="#eff1f2">
   <title>Senate donors · FEC ZIP map</title>
   <link rel="stylesheet" href="vendor/leaflet.css">
-  <link rel="stylesheet" href="style.css?v=9">
+  <link rel="stylesheet" href="style.css?v=10">
   <script defer src="vendor/leaflet.js"></script>
-  <script defer src="app.js?v=9"></script>
+  <script defer src="app.js?v=10"></script>
 </head>
 <body>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -51,16 +51,48 @@
     <button id="about-toggle" class="icon" title="Sources and methods" aria-label="Sources and methods" aria-expanded="false">i</button>
   </div>
   <div class="map-actions panel" aria-label="Map controls">
-    <button id="home" title="Show Texas" aria-label="Show Texas">TX</button>
+    <button id="home" title="U.S. overview (clear selection)" aria-label="U.S. overview">⌂</button>
     <button id="nation" title="Nationwide view" aria-label="Nationwide view" aria-pressed="false">US</button>
     <button id="zoom-in" title="Zoom in" aria-label="Zoom in">+</button>
     <button id="zoom-out" title="Zoom out" aria-label="Zoom out">−</button>
     <button id="tiles" title="Toggle USGS basemap" aria-label="Toggle USGS basemap" aria-pressed="true">▧</button>
   </div>
-  <aside class="side panel" id="side" aria-label="Selected states">
-    <button id="side-toggle" class="side-toggle" aria-expanded="true" aria-controls="cards">Itemized receipts</button>
-    <div id="cards"></div>
-    <select id="add-state" class="add-state" aria-label="Add a state"></select>
+  <nav class="tools panel" aria-label="Panels">
+    <button data-panel="side" aria-pressed="true" title="Totals and monthly receipts"><span aria-hidden="true">▤</span>Totals</button>
+    <button data-panel="rank" aria-pressed="false" title="Top places in view"><span aria-hidden="true">≡</span>Top places</button>
+    <button data-panel="donors" aria-pressed="false" title="Where each candidate's money comes from"><span aria-hidden="true">◔</span>Donor map</button>
+    <button data-panel="timeline" id="launch-timeline" aria-pressed="false" disabled title="Play the race month by month"><span aria-hidden="true">▶</span>Timeline</button>
+  </nav>
+  <aside class="side panel float" id="side" aria-label="Totals">
+    <div class="float-head"><span class="grip" aria-hidden="true">⠿</span><span class="float-title" id="side-title">Itemized receipts</span>
+      <button id="side-toggle" class="head-btn" aria-expanded="true" aria-controls="cards" aria-label="Collapse or expand"></button><button class="float-close head-btn" aria-label="Close totals">×</button></div>
+    <div class="float-body">
+      <div class="seg" id="chart-mode" role="group" aria-label="Chart"><button data-mode="monthly" aria-pressed="true">Each month</button><button data-mode="cumulative" aria-pressed="false">Running total</button></div>
+      <div id="cards"></div>
+      <select id="add-state" class="add-state" aria-label="Add a state"></select>
+    </div>
+  </aside>
+  <aside class="rank panel float" id="rank" hidden aria-label="Top places">
+    <div class="float-head"><span class="grip" aria-hidden="true">⠿</span><span class="float-title" id="rank-title">Top places</span><button class="float-close head-btn" aria-label="Close top places">×</button></div>
+    <div class="float-body">
+      <label class="rank-by">Rank by <select id="rank-by"><option value="total">Total raised</option><option value="capita">Per 100 residents</option><option value="first">First candidate's share</option><option value="second">Second candidate's share</option><option value="avg">Average contribution</option></select></label>
+      <ol id="rank-list" class="rank-list"></ol>
+      <p class="hint" id="rank-note"></p>
+    </div>
+  </aside>
+  <aside class="donors panel float" id="donors" hidden aria-label="Where the money comes from">
+    <div class="float-head"><span class="grip" aria-hidden="true">⠿</span><span class="float-title">Where the money comes from · <span id="donors-period"></span></span><button class="float-close head-btn" aria-label="Close donor map">×</button></div>
+    <div class="float-body" id="donors-body"></div>
+  </aside>
+  <aside class="timeline panel float" id="timeline" hidden aria-label="Timeline">
+    <div class="float-head"><span class="grip" aria-hidden="true">⠿</span><span class="float-title">Timeline</span><button class="float-close head-btn" aria-label="Close timeline">×</button></div>
+    <div class="float-body">
+      <div class="time-controls"><button id="time-play" class="play" aria-label="Play">▶</button><input type="range" id="time-slider" min="0" max="0" value="0" aria-label="Month"><b id="time-label"></b></div>
+      <div class="seg" id="time-mode" role="group" aria-label="Timeline shows"><button data-mode="cumulative" aria-pressed="true">Running total</button><button data-mode="month" aria-pressed="false">Single month</button></div>
+      <div id="time-chart" class="time-chart"></div>
+      <ol id="time-board" class="bars board"></ol>
+      <p class="hint">While the timeline is open the map shows whole states for the chosen month, colored by the current “Color by”. Click the chart to jump to a month. Close it to return to your areas.</p>
+    </div>
   </aside>
   <div class="legend panel" id="legend" aria-live="polite"></div>
   <div class="foot panel" id="foot" aria-live="polite"><span id="scope">Loading map…</span><span id="coverage"></span></div>
@@ -70,7 +102,7 @@
     <p>Itemized contributions from individuals to the principal federal campaign committees of James Talarico, John Cornyn, and Ken Paxton, placed at each contributor's reported ZIP. Receipt dates define the periods. Amendments replace superseded reports. Unitemized contributions (generally $200 or less per donor per election) are not included.</p>
     <p><strong>Who led</strong> shows the first candidate's share of the two compared candidates' dollars in five steps. Places with less than a set combined amount ($250 for ZIPs and county subdivisions, $1,000 for counties and metro areas, $5,000 for districts, $10,000 for states) keep the color of whoever led but are hatched to mark them as too little to call. <strong>Total raised</strong> is the pair's combined dollars. <strong>Per 100 residents</strong> divides that by ACS 2020–2024 population and hatches places with fewer than 1,000 residents (still shaded by their rate). Contribution counts are entries, not unique donors.</p>
     <p>ZIP outlines are 2020 Census ZIP Code Tabulation Areas (ZCTAs), which do not match every mailing ZIP. The County, Congressional district, Metro/micro area, and County subdivision views apportion each reported ZIP's totals among the areas it overlaps, using the share of the ZIP's residential addresses in each area (all addresses for ZIPs with none) from the HUD USPS ZIP crosswalk (June 2026). Amounts and counts there are <strong>estimates</strong>. ZIPs outside the crosswalk and non-metro or unassigned portions are left out of the shading, but state totals still include them. Congressional districts are the 119th Congress districts, which the HUD crosswalk uses; Texas's 2025 mid-decade plan is not shown.</p>
-    <p>Click a state to show it alone; Shift-, Ctrl- or ⌘-click (or “Add state”) to compare several. The side panel shows each selected state's totals and monthly receipts. Nationwide view is available for counties, districts, and metro areas.</p>
+    <p>Click a state to show it alone; Shift-, Ctrl- or ⌘-click (or “Add state”) to compare several. The panels on the left open <strong>Totals</strong> (each selected state's totals and monthly receipts), <strong>Top places</strong> (the leading areas in view by dollars, per resident, share, or average contribution), <strong>Donor map</strong> (how much of each candidate's money comes from Texas and which states give most), and <strong>Timeline</strong> (plays the race month by month on the state map). Drag panels by their title bars and resize them from the corner; they reset when you reload. Nationwide view is available for counties, districts, and metro areas.</p>
     <div class="links"><a href="data/receipts.csv" download>ZIP totals ↗</a><a href="data/state_totals.csv" download>State totals ↗</a><a href="data/levels/county.csv" download>County estimates ↗</a><a href="https://www.fec.gov/data/" target="_blank" rel="noopener">FEC ↗</a><a href="https://www.huduser.gov/portal/datasets/usps_crosswalk.html" target="_blank" rel="noopener">HUD crosswalk ↗</a><a href="https://www.census.gov/programs-surveys/acs/data/summary-file.html" target="_blank" rel="noopener">ACS population ↗</a></div>
     <p class="small">No individual names or addresses are published here. Filing updates are checked every six hours; the display changes only after the FEC files a new or amended report and the totals pass reconciliation.</p>
   </aside>
