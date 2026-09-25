@@ -312,14 +312,22 @@ function summary(codes, title, removable, code) {
 function updatePanel() {
   const period = $('period').selectedOptions[0].textContent;
   const codes = state.nationwide ? Object.keys(state.statesByCode) : state.selected;
-  let html = `<div class="side-head"><span>Itemized individual receipts · ${period}</span></div>`;
+  $('side-toggle').textContent = `Itemized receipts · ${period}`;
+  // Fit the panel to what it shows: two columns once three or more states are compared on a wide screen.
+  $('side').classList.toggle('wide', !state.nationwide && state.selected.length >= 3 && window.innerWidth > 1100);
+  let html = '';
   if (state.nationwide) html += summary(codes, 'United States', false);
-  else html += state.selected.map(c => summary([c], state.statesByCode[c], state.selected.length > 1, c)).join('');
+  else {
+    // With several states, an "All selected" card sums them above the per-state cards.
+    if (state.selected.length > 1) html += summary(state.selected, `All selected (${state.selected.length} states)`, false, 'all');
+    html += state.selected.map(c => summary([c], state.statesByCode[c], state.selected.length > 1, c)).join('');
+  }
   html += `<p class="hint">Click a state to show it alone. Shift-, Ctrl- or ⌘-click adds it. Monthly lines include all ${Object.keys(names).length} candidates.</p>`;
   $('cards').innerHTML = html;
   const cards = $('cards').querySelectorAll('.card');
-  cards.forEach((card, i) => bindChart(card, state.nationwide ? codes : [state.selected[i]]));
-  $('add-state').innerHTML = '<option value="">+ Add state…</option>' + Object.entries(state.statesByCode)
+  cards.forEach(card => bindChart(card, state.nationwide || card.dataset.code === 'all' ? codes : [card.dataset.code]));
+  $('add-state').innerHTML = '<option value="">+ Add state…</option>' +
+    (state.nationwide ? '' : '<option value="ALL">All states (nationwide)</option>') + Object.entries(state.statesByCode)
     .filter(([c]) => state.nationwide || !state.selected.includes(c)).sort((a, b) => a[1].localeCompare(b[1]))
     .map(([c, n]) => `<option value="${c}">${n}</option>`).join('');
 }
@@ -354,6 +362,7 @@ async function start() {
   }).addTo(map);
   $('coverage').textContent = `FEC through ${coverage.coverage_end} · ${coverage.filing_count} filings`;
   if (window.innerWidth <= 850) { $('side').classList.add('collapsed'); $('side-toggle').setAttribute('aria-expanded', 'false'); }
+  window.addEventListener('resize', () => $('side').classList.toggle('wide', !state.nationwide && state.selected.length >= 3 && window.innerWidth > 1100));
   syncControls();
   await render(true);
 }
@@ -371,7 +380,10 @@ for (const id of ['first', 'second']) $(id).addEventListener('change', e => {
   if (e.target.value === $(other).value) $(other).value = id === 'first' ? state.first : state.second;
   state.first = $('first').value; state.second = $('second').value; refresh();
 });
-$('add-state').addEventListener('change', e => { if (e.target.value) chooseState(e.target.value, !state.nationwide); });
+$('add-state').addEventListener('change', e => {
+  const value = e.target.value;
+  if (value === 'ALL') setNationwide(true); else if (value) chooseState(value, !state.nationwide);
+});
 $('cards').addEventListener('click', e => { const code = e.target.dataset?.remove; if (code) chooseState(code, true); });
 $('side-toggle').addEventListener('click', () => {
   const open = $('side').classList.toggle('collapsed') === false;
