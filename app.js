@@ -189,10 +189,23 @@ function stateStyle(feature) {
   if (!statesColored()) return {...base, fillColor: '#ffffff', fillOpacity: chosen || state.nationwide ? 0 : .6};
   return {...base, ...paint(stateAmounts(code), population('state', code))};
 }
+// Areas where neither compared candidate has receipts in the selected period are not drawn at all
+// (no outline, fill, or hover); they reappear as soon as the period, pair, or data gives them receipts.
+const hasReceipts = (amounts) => amounts[0][0] + amounts[1][0] > 0;
+function areaAmounts(level, feature) {
+  const {store, key} = areaKey(level, feature);
+  return comparison(store, key);
+}
 function areaStyle(level, feature) {
-  const {store, key, pop} = areaKey(level, feature);
-  return {pane: 'zctaPane', color: '#56696f', weight: level === 'zcta' || level === 'cousub' ? .35 : .6, opacity: .5,
-    ...paint(comparison(store, key), population(level, pop))};
+  const {pop} = areaKey(level, feature), amounts = areaAmounts(level, feature);
+  if (!hasReceipts(amounts)) return {pane: 'zctaPane', stroke: false, fill: false};
+  return {pane: 'zctaPane', stroke: true, fill: true, color: '#56696f', weight: level === 'zcta' || level === 'cousub' ? .35 : .6, opacity: .5,
+    ...paint(amounts, population(level, pop))};
+}
+function syncInteractivity() {
+  if (!state.layer) return;
+  const level = state.layer.level;
+  state.layer.eachLayer(polygon => { if (polygon._path) polygon._path.style.pointerEvents = hasReceipts(areaAmounts(level, polygon.feature)) ? '' : 'none'; });
 }
 /* Class cutoffs (fifths, rounded to two significant digits) and fade range, from the places shown that
    pass the filter. On the timeline the cutoffs come from every month so they hold still while it plays. */
@@ -316,7 +329,7 @@ async function render(fit = false) {
           }, 250);
         });
         polygon.on('dblclick', e => { L.DomEvent.stopPropagation(e); clearTimeout(single); resetView(); });
-        polygon.on('mouseover', () => polygon.setStyle({weight: 1.8, color: '#10212b', opacity: 1}));
+        polygon.on('mouseover', () => { if (hasReceipts(areaAmounts(level, feature))) polygon.setStyle({weight: 1.8, color: '#10212b', opacity: 1}); });
         polygon.on('mouseout', () => polygon.setStyle(areaStyle(level, feature)));
       }
     });
@@ -384,6 +397,7 @@ function updateLegend() {
   const level = coloredLevel(), label = levels[level].label;
   const swatches = (colors) => colors.map(c => `<span style="background:${c}"></span>`).join('');
   const empty = `<span class="swatch" style="background:${EMPTY}"></span>`;
+  const noneNote = level === 'state' ? `<div class="legend-note">${empty}No receipts</div>` : `<div class="legend-note">${label[0].toUpperCase() + label.slice(1)} with no receipts are hidden</div>`;
   const fadeRow = (color, what, format) => state.fade ? `<div class="fade-row"><span class="fade" style="background:linear-gradient(90deg,${faded(color, 0)},${color})"></span>` +
     `<div class="ticks ends"><span>${format(state.fade.lo)} or less</span><span>${format(state.fade.hi)}+ ${what}</span></div></div>` : '';
   let html;
@@ -391,13 +405,13 @@ function updateLegend() {
     html = `<div class="legend-title">Who led in itemized dollars</div><div class="steps">${swatches(leadClasses())}</div>` +
       `<div class="ticks8"><span>80%+</span><span>65</span><span>55</span><span>50</span><span>50</span><span>55</span><span>65</span><span>80%+</span></div>` +
       `<div class="ticks ends"><span>← ${names[state.second]} led</span><span>${names[state.first]} led →</span></div>` +
-      fadeRow(hues[state.first], 'combined', short) + `<div class="legend-note">Paler = fewer dollars behind the lead</div><div class="legend-note">${empty}No receipts</div>`;
+      fadeRow(hues[state.first], 'combined', short) + '<div class="legend-note">Paler = fewer dollars behind the lead</div>' + noneNote;
   } else {
     const capita = state.measure === 'capita', breaks = state.breaks, format = stats[capita ? 'capita' : 'total'].format;
     html = `<div class="legend-title">${capita ? 'Dollars per 100 residents' : 'Total raised'} · ${names[state.first]} + ${names[state.second]}</div>` +
       `<div class="steps">${swatches(ramp.slice(0, breaks.length + 1))}</div><div class="ticks">${breaks.map(b => `<span>${format(b)}</span>`).join('')}</div>` +
       `<div class="legend-note">Each color holds about a fifth of the ${label} shown</div>` +
-      (capita ? fadeRow(ramp[3], 'residents', people) + '<div class="legend-note">Paler = fewer residents, a less stable rate</div>' : '') + `<div class="legend-note">${empty}No receipts</div>`;
+      (capita ? fadeRow(ramp[3], 'residents', people) + '<div class="legend-note">Paler = fewer residents, a less stable rate</div>' : '') + noneNote;
   }
   if (filterOn()) html += `<div class="legend-note filter-note">Filter on: faint places are outside the range</div>`;
   if (level !== 'zcta' && level !== 'state') html += '<div class="legend-note">Area amounts are estimates apportioned from ZIPs</div>';
@@ -650,7 +664,7 @@ function play(on) {
 function setTimeline(on) {
   state.timeline = on && !!state.monthly;
   if (!on) play(false);
-  if (state.layer) state.timeline ? map.removeLayer(state.layer) : state.layer.addTo(map);
+  if (state.layer) state.timeline ? map.removeLayer(state.layer) : (state.layer.addTo(map), syncInteractivity());
   refresh(); updateScope();
 }
 
@@ -728,7 +742,7 @@ function refresh() {
   if (!state.states) return;
   computeScales();
   state.states.setStyle(stateStyle);
-  if (state.layer) state.layer.setStyle(feature => areaStyle(state.layer.level, feature));
+  if (state.layer) { state.layer.setStyle(feature => areaStyle(state.layer.level, feature)); syncInteractivity(); }
   document.querySelectorAll('.candidate-dot').forEach(dot => { dot.style.background = hues[state[dot.dataset.slot]]; });
   updateLegend(); updatePanel(); updateRank(); updateDonors(); updateTimeline(); updateFilter();
 }
