@@ -8,22 +8,32 @@ const phases = ['pre_primary', 'between_primary_runoff', 'post_runoff'];
 const phaseMonths = {pre_primary: ['2025-01', '2026-03'], between_primary_runoff: ['2026-03', '2026-05'], post_runoff: ['2026-05', '9999-12']};
 const money = (n) => '$' + Math.round(n).toLocaleString('en-US');
 const short = (n) => n >= 1e6 ? '$' + +(n / 1e6).toFixed(1) + 'm' : n >= 1e3 ? '$' + +(n / 1e3).toFixed(1) + 'k' : '$' + Math.round(n);
+const people = (n) => n >= 1e6 ? +(n / 1e6).toFixed(1) + 'm' : n >= 1e3 ? +(n / 1e3).toFixed(1) + 'k' : String(Math.round(n));
 const monthLabel = (m, style = 'short') => new Date(m + '-15').toLocaleDateString('en-US', {month: style, year: 'numeric'});
-const NEUTRAL = '#ece7e0', EMPTY = '#e6eaeb', CONUS = [[24, -125], [50, -66]];
-// floor: combined dollars below which "who led" is not called.
+const NEUTRAL = '#ece7e0', PALE = '#f4f2ef', EMPTY = '#e6eaeb', CONUS = [[24, -125], [50, -66]];
 const levels = {
-  zcta: {label: 'ZCTAs', noun: 'ZCTA', floor: 250, minPop: 1000},
-  county: {label: 'counties', noun: 'county', floor: 1000, national: true, minPop: 1000},
-  cd: {label: 'congressional districts', noun: 'district', floor: 5000, national: true, minPop: 1000},
-  cbsa: {label: 'metro/micro areas', noun: 'metro area', floor: 1000, national: true, minPop: 1000},
-  cousub: {label: 'county subdivisions', noun: 'county subdivision', floor: 250, minPop: 1000},
-  state: {label: 'states', noun: 'state', floor: 1e4, minPop: 0},
+  zcta: {label: 'ZCTAs', noun: 'ZCTA', title: 'ZIP (ZCTA)'},
+  county: {label: 'counties', noun: 'county', title: 'County', national: true},
+  cd: {label: 'congressional districts', noun: 'district', title: 'Congressional district', national: true},
+  cbsa: {label: 'metro/micro areas', noun: 'metro area', title: 'Metro/micro area', national: true},
+  cousub: {label: 'county subdivisions', noun: 'county subdivision', title: 'County subdivision'},
+  state: {label: 'states', noun: 'state', title: 'States'},
 };
 const ramp = ['#fde725', '#5ec962', '#21918c', '#3b528b', '#440154']; // viridis, light to dark
+// Statistics shared by the filter and the rankings. value(first, second, population) -> number or null.
+const stats = {
+  total: {label: () => 'Total raised', value: (a, b) => a[0] + b[0], log: true, format: short},
+  capita: {label: () => 'Per 100 residents', value: (a, b, pop) => pop ? 100 * (a[0] + b[0]) / pop : null, log: true, format: (v) => v < 10 ? '$' + +v.toFixed(2) : short(v)},
+  share: {label: () => `${names[state.first]}'s share`, value: (a, b) => a[0] + b[0] > 0 ? a[0] / (a[0] + b[0]) : null, log: false, format: (v) => Math.round(100 * v) + '%'},
+  avg: {label: () => 'Average contribution', value: (a, b) => a[2] + b[2] > 0 ? (a[0] + b[0]) / (a[2] + b[2]) : null, log: true, format: short},
+  count: {label: () => 'Contributions', value: (a, b) => a[2] + b[2], log: true, format: (v) => people(v)},
+};
 const state = {period: 'all', first: 'C00919084', second: 'C00901918', measure: 'lead', level: 'zcta',
   selected: [], nationwide: false, receipts: new Map(), totals: new Map(), areas: {}, unallocated: new Map(),
   population: {}, monthly: null, months: [], geo: new Map(), layer: null, index: new Map(), render: 0, states: null,
-  coverage: null, chartMode: 'monthly', timeline: false, timeIndex: 0, timeMode: 'cumulative', rankBy: 'total'};
+  coverage: null, breaks: [], fade: null, chartMode: 'monthly', timeline: false, timeIndex: 0, timeMode: 'cumulative',
+  rankBy: 'total', rankDesc: true, rankStates: false,
+  filter: {stat: 'total', ranges: {}, all: false, scope: ''}};
 const map = L.map('map', {zoomControl: false, doubleClickZoom: false, minZoom: 3, maxZoom: 12, preferCanvas: false,
   worldCopyJump: false, zoomSnap: .25, maxBounds: [[-10, -185], [73, -40]], maxBoundsViscosity: .6});
 map.createPane('statePane'); map.getPane('statePane').style.zIndex = 410;
@@ -83,101 +93,116 @@ function hexBlend(a, b, ratio) {
   return '#' + x.map((v, i) => Math.round(v + (y[i] - v) * t).toString(16).padStart(2, '0')).join('');
 }
 const bin = (value, breaks) => breaks.filter(b => value >= b).length;
+const population = (level, id) => state.population[level]?.get(id);
 
-/* Shading. "Who led" is five steps of the first candidate's share of the pair's dollars; areas under
-   the level's dollar floor keep their color but are hatched as too little to call. "Total raised" and
-   "Per 100 residents" are five-step sequential classes. */
+/* The colored set: exactly one level is colored at a time. States when nothing is open (or on the
+   timeline); otherwise the open areas, with every other state as plain context. */
+const statesColored = () => state.timeline || (!state.nationwide && !state.selected.length);
+function areaKey(level, feature) {
+  const p = feature.properties;
+  return level === 'zcta' ? {store: state.receipts, key: p._state + '|' + p.zip, pop: p.zip} : {store: state.areas[level], key: p.geoid, pop: p.geoid};
+}
+const areaTitle = (level, feature) => level === 'zcta' ? `ZCTA ${feature.properties.zip} · ${feature.properties._state}` : feature.properties.name;
+function stateItems() {
+  return Object.keys(state.statesByCode).map(code => ({key: code, name: state.statesByCode[code], amounts: stateAmounts(code), pop: population('state', code), isState: true}));
+}
+function areaItems() {
+  const level = state.layer.level, seen = new Set(), list = [];
+  for (const polygon of state.layer.getLayers()) {
+    const {store, key, pop} = areaKey(level, polygon.feature);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    list.push({key, name: areaTitle(level, polygon.feature), amounts: comparison(store, key), pop: population(level, pop)});
+  }
+  return list;
+}
+const coloredLevel = () => statesColored() || !state.layer ? 'state' : state.layer.level;
+const coloredItems = () => coloredLevel() === 'state' ? stateItems() : areaItems();
+
+/* Filter: ranges on any statistic; the one shown always applies, the others only with "apply all". */
+const filterOn = () => !$('filter').hidden;
+function passes(amounts, pop) {
+  if (!filterOn()) return true;
+  const f = state.filter, active = f.all ? Object.keys(f.ranges) : [f.stat];
+  for (const name of active) {
+    const range = f.ranges[name];
+    if (!range) continue;
+    const v = stats[name].value(...amounts, pop);
+    if (v == null || (range[0] != null && v < range[0]) || (range[1] != null && v > range[1])) return false;
+  }
+  return true;
+}
+
+/* Shading. "Who led" is five steps of the first candidate's share of the pair's dollars; "Total raised"
+   and "Per 100 residents" are five viridis classes cut at fifths of the places shown. Instead of a hard
+   "too little to call" cutoff, colors fade smoothly toward pale as the weight behind them shrinks:
+   dollars for "Who led", residents for "Per 100 residents". The fade runs on a log scale between the
+   10th and 75th percentile of the places shown, so it adapts to every view. */
 function leadClasses() {
   const a = hues[state.first], b = hues[state.second];
   return [b, hexBlend(b, NEUTRAL, .5), NEUTRAL, hexBlend(a, NEUTRAL, .5), a];
 }
-function classify(amounts, level, population) {
-  const a = amounts[0][0], b = amounts[1][0], total = a + b, spec = levels[level];
+function strength(weight) {
+  const f = state.fade;
+  if (!f || weight <= 0) return weight > 0 ? 1 : 0;
+  if (f.hi <= f.lo) return 1;
+  return Math.max(0, Math.min(1, (Math.log(weight) - Math.log(f.lo)) / (Math.log(f.hi) - Math.log(f.lo))));
+}
+const faded = (color, s) => hexBlend(PALE, color, .15 + .85 * s);
+function classify(amounts, pop, included = true) {
+  const a = amounts[0][0], b = amounts[1][0], total = a + b;
+  if (!included) return {fill: EMPTY, kind: 'out'};
   if (total <= 0) return {fill: EMPTY, kind: 'empty'};
   if (state.measure === 'volume') return {fill: ramp[bin(total, state.breaks)], kind: 'value'};
   if (state.measure === 'capita') {
-    if (!population) return {fill: hatched('#d9d5cf'), kind: 'thin'};
-    const color = ramp[bin(100 * total / population, state.breaks)];
-    return population < spec.minPop ? {fill: hatched(color), kind: 'thin'} : {fill: color, kind: 'value'};
+    if (!pop) return {fill: EMPTY, kind: 'nopop'};
+    const s = strength(pop);
+    return {fill: faded(ramp[bin(100 * total / pop, state.breaks)], s), kind: 'value', s};
   }
-  const color = leadClasses()[bin(a / total, [.2, .4, .6, .8])];
-  return total < spec.floor ? {fill: hatched(color), kind: 'thin'} : {fill: color, kind: 'value'};
+  const s = strength(total);
+  return {fill: faded(leadClasses()[bin(a / total, [.2, .4, .6, .8])], s), kind: 'value', s};
 }
-// One SVG pattern per base color: the class color with pale diagonal stripes over it.
-function hatched(color) {
-  const id = 'hatch-' + color.slice(1);
-  if (!document.getElementById(id)) {
-    const pattern = document.createElementNS('http://www.w3.org/2000/svg', 'pattern');
-    pattern.id = id;
-    for (const [k, v] of Object.entries({width: 6, height: 6, patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)'})) pattern.setAttribute(k, v);
-    pattern.innerHTML = `<rect width="6" height="6" fill="${color}"/><line x1="1.5" y1="0" x2="1.5" y2="6" stroke="#fbfaf8" stroke-width="2.2" stroke-opacity=".85"/>`;
-    $('patterns').appendChild(pattern);
-  }
-  return `url(#${id})`;
+function paint(amounts, pop) {
+  const {fill, kind} = classify(amounts, pop, passes(amounts, pop));
+  return {fillColor: fill, fillOpacity: kind === 'out' ? .12 : kind === 'empty' || kind === 'nopop' ? .3 : .9};
 }
-function paint(amounts, level, population) {
-  const {fill, kind} = classify(amounts, level, population);
-  return {fillColor: fill, fillOpacity: kind === 'empty' ? .3 : .88};
-}
-const population = (level, id) => state.population[level]?.get(id);
-// Only one level is ever colored: states when nothing is open (or on the timeline); otherwise the
-// open areas carry the color and every state is plain context, so no two scales share the screen.
-const statesColored = () => state.timeline || (!state.nationwide && !state.selected.length);
 function stateStyle(feature) {
   const code = feature.properties.code, chosen = !state.timeline && !state.nationwide && state.selected.includes(code);
   const base = {pane: 'statePane', color: chosen ? '#10212b' : '#7d8e95', weight: chosen ? 2.4 : .8, opacity: .9};
   if (!statesColored()) return {...base, fillColor: '#ffffff', fillOpacity: chosen || state.nationwide ? 0 : .6};
-  return {...base, ...paint(stateAmounts(code), 'state', population('state', code)), fillOpacity: .9};
+  return {...base, ...paint(stateAmounts(code), population('state', code))};
 }
-/* "Total raised" and "Per 100 residents" classes are fifths of whatever is colored right now (the open
-   areas, or states), rounded to two significant digits; the legend always lists the actual cutoffs.
-   On the timeline the cutoffs come from every month, so they hold still while it plays. */
+function areaStyle(level, feature) {
+  const {store, key, pop} = areaKey(level, feature);
+  return {pane: 'zctaPane', color: '#56696f', weight: level === 'zcta' || level === 'cousub' ? .35 : .6, opacity: .5,
+    ...paint(comparison(store, key), population(level, pop))};
+}
+/* Class cutoffs (fifths, rounded to two significant digits) and fade range, from the places shown that
+   pass the filter. On the timeline the cutoffs come from every month so they hold still while it plays. */
 function nice(v) {
   if (v <= 0) return 0;
   const p = 10 ** (Math.floor(Math.log10(v)) - 1);
   return Math.round(v / p) * p;
 }
-function computeBreaks() {
+const quantile = (sorted, q) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
+function computeScales() {
+  const capita = state.measure === 'capita', shown = coloredItems().filter(i => passes(i.amounts, i.pop));
+  const weights = shown.map(i => capita ? i.pop || 0 : i.amounts[0][0] + i.amounts[1][0]).filter(w => w > 0).sort((a, b) => a - b);
+  state.fade = weights.length > 4 ? {lo: quantile(weights, .1), hi: quantile(weights, .75)} : null;
   if (state.measure === 'lead') { state.breaks = []; return; }
-  const capita = state.measure === 'capita', list = [];
-  const push = (amounts, pop, minPop) => {
-    const total = amounts[0][0] + amounts[1][0];
-    if (total <= 0) return;
-    if (!capita) list.push(total); else if (pop && pop >= minPop) list.push(100 * total / pop);
-  };
+  let list = [];
+  const add = (i) => { const total = i.amounts[0][0] + i.amounts[1][0]; if (total > 0 && (!capita || i.pop)) list.push(capita ? 100 * total / i.pop : total); };
   if (state.timeline) {
-    const saved = state.timeIndex;
-    const indexes = state.timeMode === 'month' ? state.months.map((m, i) => i) : [state.months.length - 1];
-    for (const i of indexes) { state.timeIndex = i; for (const code of Object.keys(state.statesByCode)) push(stateAmounts(code), population('state', code), 0); }
+    const saved = state.timeIndex, indexes = state.timeMode === 'month' ? state.months.map((m, i) => i) : [state.months.length - 1];
+    for (const i of indexes) { state.timeIndex = i; stateItems().filter(x => passes(x.amounts, x.pop)).forEach(add); }
     state.timeIndex = saved;
-  } else if (statesColored() || !state.layer) {
-    for (const code of Object.keys(state.statesByCode)) push(stateAmounts(code), population('state', code), 0);
-  } else {
-    const level = state.layer.level, seen = new Set();
-    for (const polygon of state.layer.getLayers()) {
-      const {store, key, pop} = areaKey(level, polygon.feature);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      push(comparison(store, key), population(level, pop), levels[level].minPop);
-    }
-  }
-  list.sort((a, b) => a - b);
-  const cuts = [.2, .4, .6, .8].map(q => nice(list[Math.min(list.length - 1, Math.floor(q * list.length))] || 0));
+  } else shown.forEach(add);
+  list = list.sort((a, b) => a - b);
+  const cuts = [.2, .4, .6, .8].map(q => nice(quantile(list, q) || 0));
   state.breaks = cuts.filter((v, i) => v > 0 && v > (cuts[i - 1] || 0));
 }
-function areaKey(level, feature) {
-  const p = feature.properties;
-  return level === 'zcta' ? {store: state.receipts, key: p._state + '|' + p.zip, pop: p.zip} : {store: state.areas[level], key: p.geoid, pop: p.geoid};
-}
-function areaStyle(level, feature) {
-  const {store, key, pop} = areaKey(level, feature);
-  return {pane: 'zctaPane', color: '#56696f', weight: level === 'zcta' || level === 'cousub' ? .35 : .6, opacity: .5,
-    ...paint(comparison(store, key), level, population(level, pop))};
-}
-const areaTitle = (level, feature) => level === 'zcta' ? `ZCTA ${feature.properties.zip} · ${feature.properties._state}` : feature.properties.name;
 function tooltip(level, title, amounts, pop, extra = '') {
   const [a, b] = amounts, total = a[0] + b[0], estimated = level !== 'zcta' && level !== 'state';
-  const {kind} = classify(amounts, level, pop);
   const lines = [`<div class="tooltip-title">${title}</div>`];
   if (!total) lines.push('<div class="tooltip-sub">No itemized receipts from here for either candidate</div>');
   else {
@@ -188,7 +213,9 @@ function tooltip(level, title, amounts, pop, extra = '') {
     const count = a[2] + b[2];
     lines.push(`<div class="tooltip-sub">${estimated ? '≈' + count.toLocaleString('en-US', {maximumFractionDigits: 1}) + ' contributions (estimated)' : count.toLocaleString() + ' itemized contributions'}</div>`);
     if (pop) lines.push(`<div class="tooltip-sub">${money(100 * total / pop)} per 100 residents · pop. ${pop.toLocaleString()}</div>`);
-    if (kind === 'thin') lines.push(`<div class="tooltip-sub">${state.measure === 'capita' ? 'Too few residents for a stable rate' : `Under ${money(levels[level].floor)} combined: too little to call`}</div>`);
+    const {s, kind} = classify(amounts, pop, passes(amounts, pop));
+    if (kind === 'out') lines.push('<div class="tooltip-sub">Outside the filter range</div>');
+    else if (s != null && s < .5 && state.measure !== 'volume') lines.push(`<div class="tooltip-sub">Shown paler: ${state.measure === 'capita' ? 'few residents' : 'few dollars'} compared with the places shown</div>`);
   }
   return lines.join('') + extra;
 }
@@ -236,8 +263,8 @@ async function loadLevel(level) {
   }));
   if (level !== 'zcta' && !state.unallocated.size) jobs.push(file('data/levels/unallocated.csv').then(text =>
     addRows(csv(text), state.unallocated, row => row.level + '|' + row.state + '|' + row.candidate)));
-  // Population feeds per-resident shading and the rankings panel.
-  if (state.measure === 'capita' || !$('rank').hidden) jobs.push(loadPopulation(level), loadPopulation('state'));
+  // Population feeds per-resident shading, the rankings and the filter.
+  if (state.measure === 'capita' || !$('rank').hidden || filterOn()) jobs.push(loadPopulation(level), loadPopulation('state'));
   await Promise.all(jobs);
 }
 
@@ -260,12 +287,18 @@ async function render(fit = false) {
           const {store, key, pop} = areaKey(level, feature);
           return tooltip(level, areaTitle(level, feature), comparison(store, key), population(level, pop));
         }, {sticky: true, direction: 'top'});
+        // A single click zooms in (or opens the state when nationwide); a quick double click resets to the U.S.
+        let single;
         polygon.on('click', e => {
           L.DomEvent.stopPropagation(e);
-          const home = p._state || p.states[0], add = modifier(e);
-          if (state.nationwide || add) chooseState(home, add);
-          else map.fitBounds(polygon.getBounds(), {padding: [55, 55], maxZoom: 10});
+          clearTimeout(single);
+          const add = modifier(e);
+          single = setTimeout(() => {
+            if (state.nationwide || add) chooseState(p._state || p.states[0], add);
+            else map.fitBounds(polygon.getBounds(), {padding: [55, 55], maxZoom: 10});
+          }, 250);
         });
+        polygon.on('dblclick', e => { L.DomEvent.stopPropagation(e); clearTimeout(single); resetView(); });
         polygon.on('mouseover', () => polygon.setStyle({weight: 1.8, color: '#10212b', opacity: 1}));
         polygon.on('mouseout', () => polygon.setStyle(areaStyle(level, feature)));
       }
@@ -304,6 +337,17 @@ function setNationwide(on) {
   map.fitBounds(CONUS, fitPadding(4.5));
   render(!on && state.selected.length > 0);
 }
+function setLevel(level) {
+  state.level = level;
+  if (state.nationwide && !levels[level].national) state.nationwide = false;
+  syncControls();
+  render();
+}
+// Each candidate list leaves out whoever is picked in the other one.
+function syncCandidates() {
+  for (const [id, other] of [['first', 'second'], ['second', 'first']])
+    $(id).innerHTML = order.filter(c => c !== state[other]).map(c => `<option value="${c}"${c === state[id] ? ' selected' : ''}>${names[c]}</option>`).join('');
+}
 function syncControls() {
   $('view').value = state.nationwide ? 'nation' : 'states';
   $('level').value = state.level;
@@ -320,22 +364,24 @@ function updateScope(loading) {
 
 /* Legend */
 function updateLegend() {
-  const level = statesColored() ? 'state' : state.level, spec = levels[level];
+  const level = coloredLevel(), label = levels[level].label;
   const swatches = (colors) => colors.map(c => `<span style="background:${c}"></span>`).join('');
-  const stripe = (color) => `<span class="swatch hatch" style="background-color:${color}"></span>`;
-  const hatch = state.measure === 'lead' ? stripe(hues[state.first]) + stripe(hues[state.second]) : stripe(ramp[2]), empty = `<span class="swatch" style="background:${EMPTY}"></span>`;
+  const empty = `<span class="swatch" style="background:${EMPTY}"></span>`;
+  const fadeRow = (color, what, format) => state.fade ? `<div class="fade-row"><span class="fade" style="background:linear-gradient(90deg,${faded(color, 0)},${color})"></span>` +
+    `<div class="ticks ends"><span>${format(state.fade.lo)} or less</span><span>${format(state.fade.hi)}+ ${what}</span></div></div>` : '';
   let html;
   if (state.measure === 'lead') {
     html = `<div class="legend-title">Who led in itemized dollars</div><div class="steps">${swatches(leadClasses())}</div>` +
       `<div class="ticks"><span>${names[state.second]} 80%+</span><span>Even</span><span>${names[state.first]} 80%+</span></div>` +
-      `<div class="legend-note">${hatch}Under ${short(spec.floor)} combined · too little to call ${empty}None</div>`;
+      fadeRow(hues[state.first], 'combined', short) + `<div class="legend-note">Paler = fewer dollars behind the lead</div><div class="legend-note">${empty}No receipts</div>`;
   } else {
-    const capita = state.measure === 'capita', breaks = state.breaks, fmt = (v) => capita && v < 10 ? '$' + +v.toFixed(2) : short(v);
+    const capita = state.measure === 'capita', breaks = state.breaks, format = stats[capita ? 'capita' : 'total'].format;
     html = `<div class="legend-title">${capita ? 'Dollars per 100 residents' : 'Total raised'} · ${names[state.first]} + ${names[state.second]}</div>` +
-      `<div class="steps">${swatches(ramp.slice(0, breaks.length + 1))}</div><div class="ticks">${breaks.map(b => `<span>${fmt(b)}</span>`).join('')}</div>` +
-      `<div class="legend-note">Each color holds about a fifth of the ${levels[level].label} shown</div>` +
-      `<div class="legend-note">${capita && spec.minPop ? `${hatch}Under ${spec.minPop.toLocaleString()} residents · unstable rate ` : ''}${empty}None</div>`;
+      `<div class="steps">${swatches(ramp.slice(0, breaks.length + 1))}</div><div class="ticks">${breaks.map(b => `<span>${format(b)}</span>`).join('')}</div>` +
+      `<div class="legend-note">Each color holds about a fifth of the ${label} shown</div>` +
+      (capita ? fadeRow(ramp[3], 'residents', people) + '<div class="legend-note">Paler = fewer residents, a less stable rate</div>' : '') + `<div class="legend-note">${empty}No receipts</div>`;
   }
+  if (filterOn()) html += `<div class="legend-note filter-note">Filter on: faint places are outside the range</div>`;
   if (level !== 'zcta' && level !== 'state') html += '<div class="legend-note">Area amounts are estimates apportioned from ZIPs</div>';
   $('legend').innerHTML = html;
 }
@@ -419,7 +465,7 @@ function updatePanel() {
   const H = Math.round(Math.max(110, Math.min(420, Math.max(W * .42, tall))));
   box.style.setProperty('--columns', columns);
   box.innerHTML = cards.map(([codes, title, removable, code]) => summary(codes, title, removable, code, W, H)).join('') +
-    `<p class="hint">Click a state to open it. Shift-, Ctrl- or ⌘-click adds it. Drag this panel by its title; resize from the corner.</p>`;
+    `<p class="hint">Click a state to open it. Shift-, Ctrl- or ⌘-click adds it. Double-click any area to return to the U.S. Drag panels by their title; resize from the corner.</p>`;
   box.querySelectorAll('.card').forEach((card, i) => bindChart(card, state.monthly ? series(cards[i][0]) : []));
   $('add-state').innerHTML = '<option value="">+ Add state…</option>' +
     (state.nationwide ? '' : '<option value="ALL">All states (nationwide)</option>') + Object.entries(state.statesByCode)
@@ -428,56 +474,108 @@ function updatePanel() {
   document.querySelectorAll('#chart-mode button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.mode === state.chartMode)));
 }
 
-/* Rankings panel: the top areas in view by the chosen measure; hover highlights, click zooms. */
+/* Top places panel: choose the level and how to sort; hover highlights, click zooms. */
 const rankMeasures = {
-  total: {label: 'Total raised', value: (a, b) => a[0] + b[0], format: money},
-  capita: {label: 'Per 100 residents', value: (a, b, pop, spec) => pop >= spec.minPop ? 100 * (a[0] + b[0]) / pop : null, format: (v) => '$' + v.toFixed(2)},
-  first: {label: (s) => `${names[s.first]}'s share`, value: (a, b, pop, spec) => a[0] + b[0] >= spec.floor ? a[0] / (a[0] + b[0]) : null, format: (v) => Math.round(100 * v) + '%'},
-  second: {label: (s) => `${names[s.second]}'s share`, value: (a, b, pop, spec) => a[0] + b[0] >= spec.floor ? b[0] / (a[0] + b[0]) : null, format: (v) => Math.round(100 * v) + '%'},
-  avg: {label: 'Average contribution', value: (a, b) => a[2] + b[2] >= 10 ? (a[0] + b[0]) / (a[2] + b[2]) : null, format: money},
+  total: {label: () => 'Total raised', value: stats.total.value, format: money},
+  capita: {label: () => 'Per 100 residents', value: stats.capita.value, format: (v) => '$' + v.toFixed(2)},
+  first: {label: () => `${names[state.first]}'s share`, value: stats.share.value, format: stats.share.format},
+  second: {label: () => `${names[state.second]}'s share`, value: (a, b) => a[0] + b[0] > 0 ? b[0] / (a[0] + b[0]) : null, format: stats.share.format},
+  avg: {label: () => 'Average contribution', value: stats.avg.value, format: money},
+  count: {label: () => 'Contributions', value: stats.count.value, format: (v) => Math.round(v).toLocaleString()},
 };
-function rankRows() {
-  const measure = rankMeasures[state.rankBy], rows = [];
-  if (state.layer && state.layer.getLayers().length && !state.timeline) {
-    const level = state.layer.level, spec = levels[level], seen = new Set();
-    for (const polygon of state.layer.getLayers()) {
-      const {store, key, pop} = areaKey(level, polygon.feature);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const amounts = comparison(store, key), value = measure.value(...amounts, population(level, pop), spec);
-      if (value != null && amounts[0][0] + amounts[1][0] > 0) rows.push({key, name: areaTitle(level, polygon.feature), amounts, value});
-    }
-    return {rows, noun: levels[level].label};
-  }
-  for (const code of Object.keys(state.statesByCode)) {
-    const amounts = stateAmounts(code), value = measure.value(...amounts, population('state', code), levels.state);
-    if (value != null && amounts[0][0] + amounts[1][0] > 0) rows.push({key: code, name: state.statesByCode[code], amounts, value, isState: true});
-  }
-  return {rows, noun: 'states'};
-}
 function updateRank() {
   if ($('rank').hidden || !state.statesByCode) return;
-  for (const option of $('rank-by').options) {
-    const label = rankMeasures[option.value].label;
-    option.textContent = typeof label === 'function' ? label(state) : label;
+  for (const option of $('rank-by').options) option.textContent = rankMeasures[option.value].label();
+  $('rank-by').value = state.rankBy;
+  const rankLevel = state.rankStates ? 'state' : state.level;
+  $('rank-level').value = rankLevel;
+  document.querySelectorAll('#rank-order button').forEach(b => b.setAttribute('aria-pressed', String((b.dataset.order === 'desc') === state.rankDesc)));
+  const areasShown = rankLevel !== 'state' && state.layer && state.layer.getLayers().length && !state.timeline;
+  if (rankLevel !== 'state' && !areasShown) {
+    $('rank-title').textContent = `Top ${levels[rankLevel].label}`;
+    $('rank-list').innerHTML = `<li class="muted">Open a state (or turn on Nationwide for counties, districts, or metro areas) to rank ${levels[rankLevel].label}.</li>`;
+    $('rank-note').textContent = '';
+    return;
   }
-  const {rows, noun} = rankRows();
-  rows.sort((p, q) => q.value - p.value);
-  const top = rows.slice(0, 25), max = Math.max(...top.map(r => r.value), 1e-9), format = rankMeasures[state.rankBy].format;
-  $('rank-title').textContent = `Top ${noun}`;
+  const items = rankLevel === 'state' ? stateItems() : areaItems(), filtered = coloredLevel() === rankLevel;
+  const measure = rankMeasures[state.rankBy], rows = [];
+  for (const item of items) {
+    if (item.amounts[0][0] + item.amounts[1][0] <= 0 || (filtered && !passes(item.amounts, item.pop))) continue;
+    const value = measure.value(...item.amounts, item.pop);
+    if (value != null) rows.push({...item, value, total: item.amounts[0][0] + item.amounts[1][0]});
+  }
+  // Ties (such as many places at 100% share) go to the place with more dollars.
+  rows.sort((p, q) => (state.rankDesc ? q.value - p.value : p.value - q.value) || q.total - p.total);
+  const top = rows.slice(0, 25), max = Math.max(...top.map(r => r.value), 1e-9);
+  $('rank-title').textContent = `${state.rankDesc ? 'Top' : 'Bottom'} ${levels[rankLevel].label}`;
   $('rank-list').innerHTML = top.length ? top.map((r, i) => {
     const [a, b] = r.amounts;
-    return `<li data-key="${r.key}" data-state="${r.isState ? 1 : ''}" tabindex="0"><span class="rank-n">${i + 1}</span><span class="rank-name">${r.name}</span><span class="rank-value">${format(r.value)}</span>
+    return `<li data-key="${r.key}" data-state="${r.isState ? 1 : ''}" tabindex="0"><span class="rank-n">${i + 1}</span><span class="rank-name">${r.name}</span><span class="rank-value">${measure.format(r.value)}</span>
       <span class="rank-bar" style="width:${Math.max(3, 100 * r.value / max)}%"><i style="flex:${a[0]};background:${hues[state.first]}"></i><i style="flex:${b[0]};background:${hues[state.second]}"></i></span></li>`;
-  }).join('') : '<li class="muted">Nothing to rank with this measure here.</li>';
-  $('rank-note').textContent = `${rows.length.toLocaleString()} ${noun} with receipts · bar length follows the ranking, split ${names[state.first]} / ${names[state.second]}` +
-    (state.rankBy === 'avg' ? ' · areas with 10+ contributions' : state.rankBy === 'capita' ? ' · 1,000+ residents' : '');
+  }).join('') : '<li class="muted">Nothing to rank here.</li>';
+  $('rank-note').textContent = `${rows.length.toLocaleString()} ${levels[rankLevel].label} with receipts${filtered && filterOn() ? ' inside the filter' : ''} · bar length follows the ranking, split ${names[state.first]} / ${names[state.second]}. Use Filter to set minimums (for example, dollars behind a share).`;
 }
 function highlight(key, on) {
   const polygon = state.index.get(key);
   if (!polygon) return;
   if (on) { polygon.setStyle({weight: 2.4, color: '#10212b', opacity: 1}); polygon.bringToFront(); }
   else polygon.setStyle(areaStyle(state.layer.level, polygon.feature));
+}
+
+/* Filter panel: histogram and min/max range for a statistic of the places shown. */
+const SLIDER = 1000;
+function filterScope() { return coloredLevel() + '|' + (state.nationwide ? 'US' : state.selected.join(',')) + '|' + state.period + '|' + state.first + '|' + state.second; }
+function filterExtent(list, stat) {
+  const vals = list.filter(v => v != null && (!stat.log || v > 0));
+  if (!vals.length) return null;
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (!stat.log) { lo = 0; hi = 1; }
+  if (hi <= lo) hi = lo * 1.01 + 1e-9;
+  const toPos = (v) => Math.round(SLIDER * (stat.log ? (Math.log(v) - Math.log(lo)) / (Math.log(hi) - Math.log(lo)) : (v - lo) / (hi - lo)));
+  const toVal = (p) => stat.log ? Math.exp(Math.log(lo) + p / SLIDER * (Math.log(hi) - Math.log(lo))) : lo + p / SLIDER * (hi - lo);
+  return {vals, lo, hi, toPos, toVal};
+}
+function updateFilter() {
+  if (!filterOn() || !state.statesByCode) return;
+  const f = state.filter, scope = filterScope();
+  if (f.scope !== scope) { f.scope = scope; f.ranges = {}; }
+  document.querySelectorAll('#filter-stat button').forEach(b => {
+    b.setAttribute('aria-pressed', String(b.dataset.stat === f.stat));
+    b.textContent = stats[b.dataset.stat].label() + (f.ranges[b.dataset.stat] ? ' •' : '');
+  });
+  const stat = stats[f.stat], items = coloredItems().filter(i => i.amounts[0][0] + i.amounts[1][0] > 0);
+  const extent = filterExtent(items.map(i => stat.value(...i.amounts, i.pop)), stat);
+  const box = $('filter-hist'), W = Math.max(240, box.clientWidth || 300), H = 84;
+  if (!extent) { box.innerHTML = '<p class="muted">No values to filter here.</p>'; return; }
+  const range = f.ranges[f.stat] || [null, null];
+  const p0 = range[0] == null ? 0 : Math.max(0, extent.toPos(range[0])), p1 = range[1] == null ? SLIDER : Math.min(SLIDER, extent.toPos(range[1]));
+  const bins = new Array(36).fill(0);
+  for (const v of extent.vals) bins[Math.min(bins.length - 1, Math.floor(extent.toPos(v) / SLIDER * bins.length))]++;
+  const top = Math.max(...bins), bw = W / bins.length;
+  box.innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" class="hist" role="img" aria-label="Distribution of ${stat.label()}">` + bins.map((n, i) => {
+    const mid = (i + .5) / bins.length * SLIDER, h = n ? Math.max(2, (H - 4) * Math.sqrt(n / top)) : 0;
+    return `<rect x="${(i * bw + 1).toFixed(1)}" y="${H - h}" width="${(bw - 2).toFixed(1)}" height="${h}" rx="1.5" class="${mid >= p0 && mid <= p1 ? 'in' : 'out'}"><title>${n.toLocaleString()} ${coloredLevel() === 'state' ? 'states' : levels[coloredLevel()].label}</title></rect>`;
+  }).join('') + '</svg>';
+  $('filter-lo').value = p0; $('filter-hi').value = p1;
+  $('filter-min').textContent = stat.format(range[0] ?? extent.lo);
+  $('filter-max').textContent = stat.format(range[1] ?? extent.hi);
+  const inside = items.filter(i => passes(i.amounts, i.pop)).length;
+  $('filter-count').textContent = `${inside.toLocaleString()} of ${items.length.toLocaleString()} ${levels[coloredLevel()].label} included`;
+  $('filter-all').checked = f.all;
+}
+let filterFrame = 0;
+function filterInput(which) {
+  const f = state.filter, stat = stats[f.stat];
+  const items = coloredItems().filter(i => i.amounts[0][0] + i.amounts[1][0] > 0);
+  const extent = filterExtent(items.map(i => stat.value(...i.amounts, i.pop)), stat);
+  if (!extent) return;
+  let p0 = Number($('filter-lo').value), p1 = Number($('filter-hi').value);
+  if (p0 > p1) { if (which === 'lo') p0 = p1; else p1 = p0; $('filter-lo').value = p0; $('filter-hi').value = p1; }
+  const range = [p0 <= 0 ? null : extent.toVal(p0), p1 >= SLIDER ? null : extent.toVal(p1)];
+  f.ranges[f.stat] = range[0] == null && range[1] == null ? undefined : range;
+  if (!f.ranges[f.stat]) delete f.ranges[f.stat];
+  cancelAnimationFrame(filterFrame);
+  filterFrame = requestAnimationFrame(refresh);
 }
 
 /* Donors panel: where each candidate's itemized money comes from. */
@@ -517,10 +615,7 @@ function updateTimeline() {
   $('time-board').innerHTML = at.sort((p, q) => q[1] - p[1]).map(([c, v]) => `<li><span><span class="dot" style="background:${hues[c]}"></span>${names[c]}</span>
     <span class="bar"><i style="width:${100 * v / max}%;background:${hues[c]}"></i></span><span>${short(v)}</span></li>`).join('');
 }
-function timelineChanged() {
-  refresh();
-  updateScope();
-}
+function timelineChanged() { refresh(); updateScope(); }
 let playing = null;
 function play(on) {
   clearInterval(playing); playing = null;
@@ -548,7 +643,7 @@ function floating(panel) {
     if (window.innerWidth <= 850 || e.target.closest('button, select, input')) return;
     const box = panel.getBoundingClientRect(), dx = e.clientX - box.left, dy = e.clientY - box.top;
     front(panel);
-    Object.assign(panel.style, {left: box.left + 'px', top: box.top + 'px', right: 'auto', bottom: 'auto'});
+    Object.assign(panel.style, {left: box.left + 'px', top: box.top + 'px', right: 'auto', bottom: 'auto', transform: 'none'});
     panel.classList.add('dragging');
     head.setPointerCapture(e.pointerId);
     const move = (ev) => {
@@ -568,29 +663,56 @@ function floating(panel) {
     redraw(panel.id);
   }).observe(panel);
 }
+/* A newly opened panel never covers another box: keep its default spot if that is free, otherwise take
+   the free spot nearest the top right, shrinking it (height first, then width) until one exists. */
+function placeFree(panel) {
+  if (window.innerWidth <= 850) return;
+  const gap = 10, W = window.innerWidth, H = window.innerHeight;
+  const others = [...document.querySelectorAll('.panel')].filter(el => el !== panel && !el.hidden && el.offsetParent)
+    .map(el => el.getBoundingClientRect()).filter(r => r.width && r.height);
+  const hits = (x, y, w, h) => others.some(r => x < r.right + gap && x + w > r.left - gap && y < r.bottom + gap && y + h > r.top - gap);
+  const box = panel.getBoundingClientRect();
+  if (!hits(box.left, box.top, box.width, box.height)) return;
+  const sizes = [];
+  for (let h = box.height; h >= 180; h -= 40) sizes.push([box.width, h]);
+  for (let w = box.width - 40; w >= 250; w -= 40) sizes.push([w, 180]);
+  for (const [w, h] of sizes) {
+    for (let x = W - w - 17; x >= 12; x -= 12) {
+      for (let y = 80; y + h <= H - 30; y += 12) {
+        if (hits(x, y, w, h)) continue;
+        Object.assign(panel.style, {left: x + 'px', top: y + 'px', width: w + 'px', height: h + 'px', right: 'auto', bottom: 'auto', transform: 'none'});
+        return;
+      }
+    }
+  }
+}
 let z = 1010;
 const front = (panel) => { panel.style.zIndex = ++z; };
-const redraw = (id) => ({side: updatePanel, rank: updateRank, donors: updateDonors, timeline: updateTimeline})[id]?.();
+const PANELS = ['side', 'rank', 'donors', 'timeline', 'filter'];
+const redraw = (id) => ({side: updatePanel, rank: updateRank, donors: updateDonors, timeline: updateTimeline, filter: updateFilter})[id]?.();
 function openPanel(id, open) {
   const panel = $(id);
-  if (open && window.innerWidth <= 850) for (const other of ['side', 'rank', 'donors', 'timeline']) if (other !== id && !$(other).hidden) openPanel(other, false);
+  if (open && window.innerWidth <= 850) for (const other of PANELS) if (other !== id && !$(other).hidden) openPanel(other, false);
   panel.hidden = !open;
   document.querySelector(`[data-panel="${id}"]`)?.setAttribute('aria-pressed', String(open));
   if (id === 'timeline') setTimeline(open);
+  if (id === 'filter') loadLevel(state.level).then(refresh, showError);
   if (open) {
     front(panel);
     if (id === 'rank') loadLevel(state.level).then(updateRank, showError);
+    redraw(id);
+    placeFree(panel);
     redraw(id);
   }
 }
 
 function refresh() {
   if (!state.states) return;
-  computeBreaks();
+  computeScales();
   state.states.setStyle(stateStyle);
   if (state.layer) state.layer.setStyle(feature => areaStyle(state.layer.level, feature));
   document.querySelectorAll('.candidate-dot').forEach(dot => { dot.style.background = hues[state[dot.dataset.slot]]; });
-  updateLegend(); updatePanel(); updateRank(); updateDonors(); updateTimeline();
+  updateLegend(); updatePanel(); updateRank(); updateDonors(); updateTimeline(); updateFilter();
 }
 async function start() {
   const [boundaries, receipts, totals, coverage] = await Promise.all([
@@ -619,7 +741,8 @@ async function start() {
   }).addTo(map);
   $('coverage').textContent = `FEC through ${coverage.coverage_end} · ${coverage.filing_count} filings`;
   if (window.innerWidth <= 850) { $('side').classList.add('collapsed'); $('side-toggle').setAttribute('aria-expanded', 'false'); }
-  for (const id of ['side', 'rank', 'donors', 'timeline']) floating($(id));
+  for (const id of PANELS) floating($(id));
+  syncCandidates();
   syncControls();
   await render();
 }
@@ -630,13 +753,9 @@ $('measure').addEventListener('change', async e => {
   try { await loadLevel(state.level); } catch (error) { showError(error); }
   refresh();
 });
-$('level').addEventListener('change', e => {state.level = e.target.value; render();});
+$('level').addEventListener('change', e => setLevel(e.target.value));
 $('view').addEventListener('change', e => setNationwide(e.target.value === 'nation'));
-for (const id of ['first', 'second']) $(id).addEventListener('change', e => {
-  const other = id === 'first' ? 'second' : 'first';
-  if (e.target.value === $(other).value) $(other).value = id === 'first' ? state.first : state.second;
-  state.first = $('first').value; state.second = $('second').value; refresh();
-});
+for (const id of ['first', 'second']) $(id).addEventListener('change', e => { state[id] = e.target.value; syncCandidates(); refresh(); });
 $('add-state').addEventListener('change', e => {
   const value = e.target.value;
   if (value === 'ALL') setNationwide(true); else if (value) chooseState(value, !state.nationwide && state.selected.length > 0);
@@ -655,6 +774,15 @@ $('rank-by').addEventListener('change', async e => {
   try { await loadLevel(state.level); } catch (error) { showError(error); }
   updateRank();
 });
+$('rank-level').addEventListener('change', e => {
+  const level = e.target.value;
+  state.rankStates = level === 'state';
+  if (state.rankStates) return updateRank();
+  // Ranking counties, districts or metro areas with nothing open shows them nationwide.
+  if (!state.selected.length && !state.nationwide && levels[level].national) { state.level = level; setNationwide(true); }
+  else setLevel(level);
+});
+$('rank-order').addEventListener('click', e => { const order = e.target.dataset?.order; if (order) { state.rankDesc = order === 'desc'; updateRank(); } });
 const rankItem = (e) => e.target.closest('li[data-key]');
 $('rank-list').addEventListener('pointerover', e => { const li = rankItem(e); if (li && !li.dataset.state) highlight(li.dataset.key, true); });
 $('rank-list').addEventListener('pointerout', e => { const li = rankItem(e); if (li && !li.dataset.state) highlight(li.dataset.key, false); });
@@ -665,6 +793,11 @@ $('rank-list').addEventListener('click', e => {
   const polygon = state.index.get(li.dataset.key);
   if (polygon) { map.fitBounds(polygon.getBounds(), fitPadding(10)); polygon.openTooltip(polygon.getBounds().getCenter()); }
 });
+$('filter-stat').addEventListener('click', e => { const stat = e.target.dataset?.stat; if (stat) { state.filter.stat = stat; refresh(); } });
+$('filter-lo').addEventListener('input', () => filterInput('lo'));
+$('filter-hi').addEventListener('input', () => filterInput('hi'));
+$('filter-all').addEventListener('change', e => { state.filter.all = e.target.checked; refresh(); });
+$('filter-reset').addEventListener('click', () => { state.filter.ranges = {}; refresh(); });
 $('donors-body').addEventListener('click', e => { const li = e.target.closest('li.pick'); if (li) chooseState(li.dataset.code, modifier(e)); });
 $('time-slider').addEventListener('input', e => { play(false); state.timeIndex = Number(e.target.value); timelineChanged(); });
 $('time-play').addEventListener('click', () => play(!playing));

@@ -6,9 +6,9 @@
   <meta name="theme-color" content="#eff1f2">
   <title>Senate donors · FEC ZIP map</title>
   <link rel="stylesheet" href="vendor/leaflet.css">
-  <link rel="stylesheet" href="style.css?v=11">
+  <link rel="stylesheet" href="style.css?v=12">
   <script defer src="vendor/leaflet.js"></script>
-  <script defer src="app.js?v=11"></script>
+  <script defer src="app.js?v=12"></script>
 </head>
 <body>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -61,6 +61,7 @@
     <button data-panel="side" aria-pressed="true" title="Totals and monthly receipts"><span aria-hidden="true">▤</span>Totals</button>
     <button data-panel="rank" aria-pressed="false" title="Top places in view"><span aria-hidden="true">≡</span>Top places</button>
     <button data-panel="donors" aria-pressed="false" title="Where each candidate's money comes from"><span aria-hidden="true">◔</span>Donor map</button>
+    <button data-panel="filter" aria-pressed="false" title="Keep only places within a range"><span aria-hidden="true">⧩</span>Filter</button>
     <button data-panel="timeline" id="launch-timeline" aria-pressed="false" disabled title="Play the race month by month"><span aria-hidden="true">▶</span>Timeline</button>
   </nav>
   <aside class="side panel float" id="side" aria-label="Totals">
@@ -75,9 +76,25 @@
   <aside class="rank panel float" id="rank" hidden aria-label="Top places">
     <div class="float-head"><span class="grip" aria-hidden="true">⠿</span><span class="float-title" id="rank-title">Top places</span><button class="float-close head-btn" aria-label="Close top places">×</button></div>
     <div class="float-body">
-      <label class="rank-by">Rank by <select id="rank-by"><option value="total">Total raised</option><option value="capita">Per 100 residents</option><option value="first">First candidate's share</option><option value="second">Second candidate's share</option><option value="avg">Average contribution</option></select></label>
+      <div class="rank-controls">
+        <label class="rank-by">Places <select id="rank-level"><option value="state">States</option><option value="zcta">ZIP (ZCTA)</option><option value="county">Counties</option><option value="cd">Congressional districts</option><option value="cbsa">Metro/micro areas</option><option value="cousub">County subdivisions</option></select></label>
+        <label class="rank-by">Rank by <select id="rank-by"><option value="total">Total raised</option><option value="capita">Per 100 residents</option><option value="first">First candidate's share</option><option value="second">Second candidate's share</option><option value="avg">Average contribution</option><option value="count">Contributions</option></select></label>
+        <div class="seg" id="rank-order" role="group" aria-label="Order"><button data-order="desc" aria-pressed="true">Highest first</button><button data-order="asc" aria-pressed="false">Lowest first</button></div>
+      </div>
       <ol id="rank-list" class="rank-list"></ol>
       <p class="hint" id="rank-note"></p>
+    </div>
+  </aside>
+  <aside class="filter panel float" id="filter" hidden aria-label="Filter places">
+    <div class="float-head"><span class="grip" aria-hidden="true">⠿</span><span class="float-title">Filter places</span><button class="float-close head-btn" aria-label="Close filter">×</button></div>
+    <div class="float-body">
+      <div class="seg wrap" id="filter-stat" role="group" aria-label="Statistic"><button data-stat="total">Total raised</button><button data-stat="capita">Per 100 residents</button><button data-stat="share">Share</button><button data-stat="avg">Average contribution</button><button data-stat="count">Contributions</button></div>
+      <div id="filter-hist" class="filter-hist"></div>
+      <div class="dual"><input type="range" id="filter-lo" min="0" max="1000" value="0" aria-label="Minimum"><input type="range" id="filter-hi" min="0" max="1000" value="1000" aria-label="Maximum"></div>
+      <div class="filter-ends"><span>Min <b id="filter-min"></b></span><span id="filter-count"></span><span>Max <b id="filter-max"></b></span></div>
+      <label class="check"><input type="checkbox" id="filter-all"> Also apply the ranges set on the other statistics (marked •), even when they aren't shown</label>
+      <button id="filter-reset" class="text-btn">Clear all ranges</button>
+      <p class="hint">Drag the handles to keep only places whose value falls inside the range; the rest turn faint and drop out of the color scale and Top places. The histogram covers the places currently colored. Closing this panel removes the filter.</p>
     </div>
   </aside>
   <aside class="donors panel float" id="donors" hidden aria-label="Where the money comes from">
@@ -100,9 +117,9 @@
     <button class="close" id="about-close" aria-label="Close sources and methods">×</button>
     <h1>About this map</h1>
     <p>Itemized contributions from individuals to the principal federal campaign committees of James Talarico, John Cornyn, and Ken Paxton, placed at each contributor's reported ZIP. Receipt dates define the periods. Amendments replace superseded reports. Unitemized contributions (generally $200 or less per donor per election) are not included.</p>
-    <p><strong>Who led</strong> shows the first candidate's share of the two compared candidates' dollars in five steps. Places with less than a set combined amount ($250 for ZIPs and county subdivisions, $1,000 for counties and metro areas, $5,000 for districts, $10,000 for states) keep the color of whoever led but are hatched to mark them as too little to call. <strong>Total raised</strong> is the pair's combined dollars. <strong>Per 100 residents</strong> divides that by ACS 2020–2024 population and hatches places with fewer than 1,000 residents (still shaded by their rate). For these two, each color holds about a fifth of the places shown, and the legend lists the cutoffs. Only one level is colored at a time: states when nothing is open, otherwise just the open areas, with other states left plain. Contribution counts are entries, not unique donors.</p>
+    <p><strong>Who led</strong> shows the first candidate's share of the two compared candidates' dollars in five steps. There is no fixed cutoff for places with few dollars: colors fade smoothly toward pale as the dollars behind them shrink, relative to the places shown. <strong>Total raised</strong> is the pair's combined dollars. <strong>Per 100 residents</strong> divides that by ACS 2020–2024 population and fades places with few residents, whose rates are less stable. For these two, each color holds about a fifth of the places shown, and the legend lists the cutoffs. Only one level is colored at a time: states when nothing is open, otherwise just the open areas, with other states left plain. Contribution counts are entries, not unique donors.</p>
     <p>ZIP outlines are 2020 Census ZIP Code Tabulation Areas (ZCTAs), which do not match every mailing ZIP. The County, Congressional district, Metro/micro area, and County subdivision views apportion each reported ZIP's totals among the areas it overlaps, using the share of the ZIP's residential addresses in each area (all addresses for ZIPs with none) from the HUD USPS ZIP crosswalk (June 2026). Amounts and counts there are <strong>estimates</strong>. ZIPs outside the crosswalk and non-metro or unassigned portions are left out of the shading, but state totals still include them. Congressional districts are the 119th Congress districts, which the HUD crosswalk uses; Texas's 2025 mid-decade plan is not shown.</p>
-    <p>Click a state to show it alone; Shift-, Ctrl- or ⌘-click (or “Add state”) to compare several. The panels on the left open <strong>Totals</strong> (each selected state's totals and monthly receipts), <strong>Top places</strong> (the leading areas in view by dollars, per resident, share, or average contribution), <strong>Donor map</strong> (how much of each candidate's money comes from Texas and which states give most), and <strong>Timeline</strong> (plays the race month by month on the state map). Drag panels by their title bars and resize them from the corner; they reset when you reload. Nationwide view is available for counties, districts, and metro areas.</p>
+    <p>Click a state to show it alone; Shift-, Ctrl- or ⌘-click (or “Add state”) to compare several. The panels on the left open <strong>Totals</strong> (each selected state's totals and monthly receipts), <strong>Top places</strong> (the leading areas in view by dollars, per resident, share, or average contribution), <strong>Donor map</strong> (how much of each candidate's money comes from Texas and which states give most), and <strong>Filter</strong> (a histogram with minimum and maximum handles for dollars, per-resident rate, share, average contribution, or number of contributions), and <strong>Timeline</strong> (plays the race month by month on the state map). Double-click any ZIP, county, or district to return to the U.S. view. Drag panels by their title bars and resize them from the corner; they reset when you reload. Nationwide view is available for counties, districts, and metro areas.</p>
     <div class="links"><a href="data/receipts.csv" download>ZIP totals ↗</a><a href="data/state_totals.csv" download>State totals ↗</a><a href="data/levels/county.csv" download>County estimates ↗</a><a href="https://www.fec.gov/data/" target="_blank" rel="noopener">FEC ↗</a><a href="https://www.huduser.gov/portal/datasets/usps_crosswalk.html" target="_blank" rel="noopener">HUD crosswalk ↗</a><a href="https://www.census.gov/programs-surveys/acs/data/summary-file.html" target="_blank" rel="noopener">ACS population ↗</a></div>
     <p class="small">No individual names or addresses are published here. Filing updates are checked every six hours; the display changes only after the FEC files a new or amended report and the totals pass reconciliation.</p>
   </aside>
