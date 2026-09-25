@@ -142,14 +142,22 @@ function passes(amounts, pop) {
   return true;
 }
 
-/* Shading. "Who led" is five steps of the first candidate's share of the pair's dollars; "Total raised"
+/* Shading. "Who led" is eight steps of the leader's share of the pair's dollars (see leadClasses); "Total raised"
    and "Per 100 residents" are five viridis classes cut at fifths of the places shown. Instead of a hard
    "too little to call" cutoff, colors fade smoothly toward pale as the weight behind them shrinks:
    dollars for "Who led", residents for "Per 100 residents". The fade runs on a log scale between the
    10th and 75th percentile of the places shown, so it adapts to every view. */
+// Eight steps, four per side (leader's share 50-55, 55-65, 65-80, 80%+), from the second candidate's
+// strongest to the first's. There is no neutral band: any lead, however narrow, tints toward the leader.
+const LEAD_CUTS = [.55, .65, .8];
 function leadClasses() {
-  const a = hues[state.first], b = hues[state.second];
-  return [b, hexBlend(b, NEUTRAL, .5), NEUTRAL, hexBlend(a, NEUTRAL, .5), a];
+  const side = (hue) => [.3, .5, .75, 1].map(t => hexBlend(NEUTRAL, hue, t));
+  return [...side(hues[state.second]).reverse(), ...side(hues[state.first])];
+}
+function leadColor(share) {
+  if (share === .5) return NEUTRAL;
+  const classes = leadClasses();
+  return share > .5 ? classes[4 + bin(share, LEAD_CUTS)] : classes[3 - bin(1 - share, LEAD_CUTS)];
 }
 function strength(weight) {
   const f = state.fade;
@@ -169,7 +177,7 @@ function classify(amounts, pop, included = true) {
     return {fill: faded(ramp[bin(100 * total / pop, state.breaks)], s), kind: 'value', s};
   }
   const s = strength(total);
-  return {fill: faded(leadClasses()[bin(a / total, [.2, .4, .6, .8])], s), kind: 'value', s};
+  return {fill: faded(leadColor(a / total), s), kind: 'value', s};
 }
 function paint(amounts, pop) {
   const {fill, kind} = classify(amounts, pop, passes(amounts, pop));
@@ -381,7 +389,8 @@ function updateLegend() {
   let html;
   if (state.measure === 'lead') {
     html = `<div class="legend-title">Who led in itemized dollars</div><div class="steps">${swatches(leadClasses())}</div>` +
-      `<div class="ticks"><span>${names[state.second]} 80%+</span><span>Even</span><span>${names[state.first]} 80%+</span></div>` +
+      `<div class="ticks8"><span>80%+</span><span>65</span><span>55</span><span>50</span><span>50</span><span>55</span><span>65</span><span>80%+</span></div>` +
+      `<div class="ticks ends"><span>← ${names[state.second]} led</span><span>${names[state.first]} led →</span></div>` +
       fadeRow(hues[state.first], 'combined', short) + `<div class="legend-note">Paler = fewer dollars behind the lead</div><div class="legend-note">${empty}No receipts</div>`;
   } else {
     const capita = state.measure === 'capita', breaks = state.breaks, format = stats[capita ? 'capita' : 'total'].format;

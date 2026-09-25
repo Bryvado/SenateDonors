@@ -50,3 +50,4 @@ button:focus-visible,select:focus-visible,a:focus-visible{outline:3px solid #288
 .period-ticks{display:flex;justify-content:space-between;gap:4px;font-size:8.5px;letter-spacing:0;text-transform:none;font-weight:600;color:#6b7c83;padding:0 2px}.period-ticks span{flex:1;text-align:center}
 @media(max-width:850px){.control.period{width:100%;min-width:0}}
 @media(max-width:850px){.control.period{flex:1 1 100%!important;max-width:none}}
+.ticks8{display:grid;grid-template-columns:repeat(8,1fr);gap:2px;margin-top:3px;font-size:9.5px;color:#586970;text-align:center}.ticks8 span:nth-child(4){border-right:1px solid #9aa8ad}
