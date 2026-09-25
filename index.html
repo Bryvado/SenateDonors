@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="vendor/leaflet.css">
   <link rel="stylesheet" href="style.css">
   <script defer src="vendor/leaflet.js"></script>
-  <script defer src="app.js?v=5"></script>
+  <script defer src="app.js?v=6"></script>
 </head>
 <body>
   <main id="map" aria-label="Interactive map of itemized Senate campaign contributions"></main>
@@ -30,6 +30,15 @@
     <label class="control candidate"><span>Red</span>
       <select id="second"><option value="C00901918">Paxton</option><option value="C00369033">Cornyn</option><option value="C00919084">Talarico</option></select>
     </label>
+    <label class="control"><span>Level</span>
+      <select id="level">
+        <option value="zcta" selected>ZIP (ZCTA)</option>
+        <option value="county">County</option>
+        <option value="cd">Cong. district</option>
+        <option value="cbsa">Metro area</option>
+        <option value="cousub">County subdivision</option>
+      </select>
+    </label>
     <label class="control"><span>Color</span>
       <select id="measure"><option value="lead">Dominance</option><option value="volume">Combined $</option></select>
     </label>
@@ -49,8 +58,9 @@
     <h1>About this map</h1>
     <p>Positive itemized individual receipts from the principal federal campaign committees of James Talarico, John Cornyn, and Ken Paxton. Receipt dates define the periods. Amendments replace superseded reports.</p>
     <p>Color compares <strong>dollars received</strong> at a reported contributor ZIP. Outlines are 2020 Census ZIP Code Tabulation Areas (ZCTAs), which do not match every mailing ZIP. Unitemized contributions and ZIPs without a matching ZCTA are absent from the local shading. State totals include their reported ZIPs, including those without a ZCTA.</p>
+    <p>The County, Cong. district, Metro area, and County subdivision levels apportion each reported ZIP's totals among the areas it overlaps, using the share of the ZIP's residential addresses in each area (all addresses for ZIPs with none) from the HUD USPS ZIP crosswalk (June 2026). Area totals and entry counts there are therefore <strong>estimates</strong>. ZIPs outside the crosswalk and non-metro or unassigned portions are left out of the shading, but state totals still include them. Congressional districts are the 119th Congress districts, which the HUD crosswalk uses; Texas's 2025 mid-decade plan is not shown.</p>
     <p>Hover for dollar amounts and contribution entries. Click a state to open its ZCTAs. Double-click a state or its ZCTAs to hide that detail. Colors can be strong even where only a small amount was given.</p>
-    <div class="links"><a href="data/receipts.csv" download>Download ZIP totals ↗</a><a href="data/state_totals.csv" download>State totals ↗</a><a href="https://www.fec.gov/data/" target="_blank" rel="noopener">FEC ↗</a><a href="https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.2020.html" target="_blank" rel="noopener">Census geometry ↗</a></div>
+    <div class="links"><a href="data/receipts.csv" download>Download ZIP totals ↗</a><a href="data/state_totals.csv" download>State totals ↗</a><a href="data/levels/county.csv" download>County estimates ↗</a><a href="https://www.huduser.gov/portal/datasets/usps_crosswalk.html" target="_blank" rel="noopener">HUD crosswalk ↗</a><a href="https://www.fec.gov/data/" target="_blank" rel="noopener">FEC ↗</a><a href="https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.2020.html" target="_blank" rel="noopener">Census geometry ↗</a></div>
     <p class="small">No individual names or addresses are published here. Filing updates are checked every six hours; the display changes only after the FEC files a new or amended report and the totals pass reconciliation.</p>
   </aside>
   <div id="error" class="error panel" role="alert" hidden></div>

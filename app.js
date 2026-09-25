@@ -1,10 +1,18 @@
-/* Static FEC map. State shapes and ZCTAs are fetched only as the user opens them. */
+/* Static FEC map. State shapes, ZCTAs and other levels are fetched only as the user opens them. */
 const $ = (id) => document.getElementById(id);
 const names = {C00919084: 'Talarico', C00369033: 'Cornyn', C00901918: 'Paxton'};
 const phases = ['pre_primary', 'between_primary_runoff', 'post_runoff'];
 const money = (n) => '$' + Math.round(n).toLocaleString('en-US');
-const state = {period: 'between_primary_runoff', first: 'C00919084', second: 'C00901918', measure: 'lead',
-  receipts: new Map(), totals: new Map(), zctas: new Map(), open: new Map(), pending: new Map(), states: null, coverage: null};
+const levels = {
+  zcta: {label: 'ZCTAs', noun: 'ZCTA', range: [0, 5], ticks: '$0–$100k+'},
+  county: {label: 'counties', noun: 'county', range: [2, 6], ticks: '$100–$1m+', national: true},
+  cd: {label: 'congressional districts', noun: 'district', range: [3.5, 6.5], ticks: '$3k–$3m+', national: true},
+  cbsa: {label: 'metro/micro areas', noun: 'metro area', range: [2, 6], ticks: '$100–$1m+', national: true},
+  cousub: {label: 'county subdivisions', noun: 'county subdivision', range: [0, 5], ticks: '$0–$100k+'},
+};
+const state = {period: 'between_primary_runoff', first: 'C00919084', second: 'C00901918', measure: 'lead', level: 'zcta',
+  receipts: new Map(), totals: new Map(), areas: {}, unallocated: new Map(), geo: new Map(),
+  open: new Map(), pending: new Map(), states: null, coverage: null};
 const map = L.map('map', {zoomControl: false, doubleClickZoom: false, minZoom: 3, maxZoom: 12, preferCanvas: false,
   worldCopyJump: false, zoomSnap: .25, maxBounds: [[-10, -185], [73, -40]], maxBoundsViscosity: .6});
 map.createPane('statePane'); map.getPane('statePane').style.zIndex = 410;
@@ -60,8 +68,8 @@ function color(amounts, geography = 'zcta') {
   const a = amounts[0][0], b = amounts[1][0], total = a + b;
   if (total <= 0) return {fillColor: '#d7dddc', fillOpacity: .6};
   if (state.measure === 'volume') {
-    const log = Math.log10(total + 1);
-    const t = geography === 'state' ? Math.max(0, Math.min(1, (log - 4) / 3)) : Math.min(1, log / 5);
+    const log = Math.log10(total + 1), [low, high] = geography === 'state' ? [4, 7] : levels[geography].range;
+    const t = Math.max(0, Math.min(1, (log - low) / (high - low)));
     return {fillColor: hexBlend('#e9e1d8', '#174b6a', t), fillOpacity: .88};
   }
   const share = a / total;
@@ -73,46 +81,89 @@ function stateStyle(feature) {
   return {pane: 'statePane', color: '#647783', weight: state.open.has(code) ? 1.8 : .8,
     opacity: .85, ...color(comparison(state.totals, code), 'state'), fillOpacity: state.open.has(code) ? .08 : .65};
 }
-function zctaStyle(code, feature) {
-  return {pane: 'zctaPane', color: '#667b83', weight: .45, opacity: .35,
-    ...color(comparison(state.receipts, code + '|' + feature.properties.zip))};
+// ZCTAs are keyed by reported state + ZIP; other levels by crosswalk geoid alone.
+function areaAmounts(level, code, feature) {
+  return level === 'zcta' ? comparison(state.receipts, code + '|' + feature.properties.zip)
+    : comparison(state.areas[level], feature.properties.geoid);
 }
-function tooltip(code, zip) {
-  const [a, b] = comparison(zip ? state.receipts : state.totals, code + (zip ? '|' + zip : ''));
-  const total = a[0] + b[0];
+function areaStyle(level, code, feature) {
+  return {pane: 'zctaPane', color: '#667b83', weight: level === 'zcta' || level === 'cousub' ? .45 : .7, opacity: .35,
+    ...color(areaAmounts(level, code, feature), level)};
+}
+function tooltip(code, feature, level) {
+  const [a, b] = feature ? areaAmounts(level, code, feature) : comparison(state.totals, code);
+  const total = a[0] + b[0], estimated = feature && level !== 'zcta';
   const share = total ? `${Math.round(100 * a[0] / total)}% ${names[state.first]}` : 'No mapped receipts';
-  return `<div class="tooltip-title">${zip ? `ZCTA ${zip} · ${code}` : state.statesByCode[code]}</div>` +
+  const entries = estimated ? `≈${(a[2] + b[2]).toLocaleString('en-US', {maximumFractionDigits: 1})} estimated entries`
+    : `${(a[2] + b[2]).toLocaleString()} entries`;
+  const title = !feature ? state.statesByCode[code] : level === 'zcta' ? `ZCTA ${feature.properties.zip} · ${code}` : feature.properties.name;
+  let note = '';
+  if (!feature && state.level !== 'zcta') {
+    const [x, y] = comparison(state.unallocated, state.level + '|' + code);
+    if (x[0] + y[0] >= .5) note = `<div class="tooltip-sub">${money(x[0] + y[0])} in ZIPs with no mappable ${levels[state.level].noun}</div>`;
+  }
+  return `<div class="tooltip-title">${title}</div>` +
     `<div>${names[state.first]} ${money(a[0])} · ${names[state.second]} ${money(b[0])}</div>` +
-    `<div class="tooltip-sub">${share} · ${(a[2] + b[2]).toLocaleString()} entries</div>`;
+    `<div class="tooltip-sub">${share} · ${entries}${estimated ? ' (apportioned)' : ''}</div>` + note;
 }
 function showError(error) {
   $('error').textContent = error.message || String(error);
   $('error').hidden = false;
   console.error(error);
 }
+async function cached(key, load) {
+  if (!state.geo.has(key)) state.geo.set(key, load().catch(error => { state.geo.delete(key); throw error; }));
+  return state.geo.get(key);
+}
+async function geometry(level, code) {
+  const name = encodeURIComponent(code) + '.bin';
+  if (level === 'zcta') return cached('zcta|' + code, () => packed(`data/zctas/${name}?v=3`));
+  if (level === 'cousub') return cached('cousub|' + code, () => packed(`data/levels/geo/cousub/${name}?v=1`));
+  // Counties, districts and metro areas load once nationally; a state shows the areas that touch it.
+  const all = await cached(level, () => packed(`data/levels/geo/${level}.bin?v=1`));
+  return {type: 'FeatureCollection', features: all.features.filter(f => f.properties.states.includes(code))};
+}
+async function loadLevel(level) {
+  if (level === 'zcta' || state.areas[level]) return;
+  const [rows, unallocated] = await Promise.all([file(`data/levels/${level}.csv`),
+    state.unallocated.size ? null : file('data/levels/unallocated.csv')]);
+  const areas = new Map();
+  addRows(csv(rows), areas, row => row.geoid + '|' + row.candidate);
+  if (unallocated) addRows(csv(unallocated), state.unallocated, row => row.level + '|' + row.state + '|' + row.candidate);
+  state.areas[level] = areas;
+}
+async function setLevel(level) {
+  const codes = [...state.open.keys(), ...state.pending.keys()];
+  $('scope').textContent = `Loading ${levels[level].label}…`;
+  try { await loadLevel(level); } catch (error) { $('level').value = state.level; showError(error); updateScope(); return; }
+  state.level = level;
+  for (const code of new Set(codes)) closeState(code);
+  refresh();
+  await Promise.all([...new Set(codes)].map(code => openState(code, false)));
+}
 async function openState(code, fit = true) {
   if (state.open.has(code)) { if (fit) map.fitBounds(state.open.get(code).getBounds(), {padding: [30, 30], maxZoom: 8}); return; }
   if (state.pending.has(code)) return;
   const request = Symbol(code);
   state.pending.set(code, request);
+  const level = state.level;
   $('scope').textContent = `Loading ${state.statesByCode[code]}…`;
   try {
-    let geo = state.zctas.get(code);
-    if (!geo) { geo = await packed(`data/zctas/${encodeURIComponent(code)}.bin?v=3`); state.zctas.set(code, geo); }
-    if (state.pending.get(code) !== request) return;
+    const geo = await geometry(level, code);
+    if (state.pending.get(code) !== request || state.level !== level) return;
     const layer = L.geoJSON(geo, {
-      pane: 'zctaPane', smoothFactor: .5, style: feature => zctaStyle(code, feature),
+      pane: 'zctaPane', smoothFactor: .5, style: feature => areaStyle(level, code, feature),
       onEachFeature: (feature, polygon) => {
-        const zip = feature.properties.zip;
-        polygon.bindTooltip(() => tooltip(code, zip), {sticky: true, direction: 'top'});
+        polygon.bindTooltip(() => tooltip(code, feature, level), {sticky: true, direction: 'top'});
         let singleClick;
         polygon.on('click', e => { L.DomEvent.stopPropagation(e); clearTimeout(singleClick);
           singleClick = setTimeout(() => map.fitBounds(polygon.getBounds(), {padding: [55, 55], maxZoom: 10}), 230); });
         polygon.on('dblclick', e => { L.DomEvent.stopPropagation(e); clearTimeout(singleClick); closeState(code); });
         polygon.on('mouseover', () => polygon.setStyle({weight: 1.4, color: '#253d49', opacity: .9}));
-        polygon.on('mouseout', () => polygon.setStyle(zctaStyle(code, feature)));
+        polygon.on('mouseout', () => polygon.setStyle(areaStyle(level, code, feature)));
       }
     }).addTo(map);
+    layer.level = level;
     state.open.set(code, layer);
     state.states.setStyle(stateStyle);
     updateScope();
@@ -128,11 +179,13 @@ function closeState(code) {
 }
 function updateScope() {
   const codes = [...state.open.keys()];
-  $('scope').textContent = codes.length ? `${codes.map(c => state.statesByCode[c]).join(' · ')} · ZCTAs` : 'U.S. · click a state to open ZCTAs';
+  const label = levels[state.level].label;
+  $('scope').textContent = codes.length ? `${codes.map(c => state.statesByCode[c]).join(' · ')} · ${label}` : `U.S. · click a state to open ${label}`;
 }
 function updateLegend() {
   if (state.measure === 'volume') {
-    $('legend').innerHTML = `<div class="legend-title">Combined positive receipts</div><div class="scale volume"></div><div class="ticks"><span>Less</span><span>More</span></div><div class="legend-note">ZCTAs: $0–$100k+ · states: $10k–$10m+ · gray has no receipts</div>`;
+    const level = levels[state.level];
+    $('legend').innerHTML = `<div class="legend-title">Combined positive receipts</div><div class="scale volume"></div><div class="ticks"><span>Less</span><span>More</span></div><div class="legend-note">${level.label[0].toUpperCase() + level.label.slice(1)}: ${level.ticks} · states: $10k–$10m+ · gray has no receipts${state.level === 'zcta' ? '' : ' · area totals are estimates'}</div>`;
   } else {
     $('legend').innerHTML = `<div class="legend-title">Share of positive receipts</div><div class="scale"></div><div class="ticks"><span>${names[state.second]} 100%</span><span>50 / 50</span><span>${names[state.first]} 100%</span></div><div class="legend-note">Fainter areas have fewer dollars · gray has no receipts</div>`;
   }
@@ -140,7 +193,7 @@ function updateLegend() {
 function refresh() {
   if (!state.states) return;
   state.states.setStyle(stateStyle);
-  for (const [code, layer] of state.open) layer.setStyle(feature => zctaStyle(code, feature));
+  for (const [code, layer] of state.open) layer.setStyle(feature => areaStyle(layer.level, code, feature));
   updateLegend();
 }
 async function start() {
@@ -154,7 +207,7 @@ async function start() {
     pane: 'statePane', style: stateStyle,
     onEachFeature: (feature, layer) => {
       const code = feature.properties.code;
-      layer.bindTooltip(() => tooltip(code), {sticky: true, direction: 'top'});
+      layer.bindTooltip(() => tooltip(code, null, state.level), {sticky: true, direction: 'top'});
       let singleClick;
       layer.on('click', e => { L.DomEvent.stopPropagation(e); clearTimeout(singleClick);
         singleClick = setTimeout(() => openState(code), 230); });
@@ -172,6 +225,7 @@ async function start() {
 
 $('period').addEventListener('change', e => {state.period = e.target.value; refresh();});
 $('measure').addEventListener('change', e => {state.measure = e.target.value; refresh();});
+$('level').addEventListener('change', e => setLevel(e.target.value));
 for (const id of ['first', 'second']) $(id).addEventListener('change', e => {
   const other = id === 'first' ? 'second' : 'first';
   if (e.target.value === $(other).value) $(other).value = id === 'first' ? state.first : state.second;

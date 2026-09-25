@@ -7,7 +7,7 @@ from collections import defaultdict
 from decimal import Decimal
 from pathlib import Path
 
-from update_data import write_data, CANDIDATES, PHASES
+from update_data import publish, CANDIDATES, PHASES
 
 
 def main():
@@ -47,7 +47,7 @@ def main():
         "filing_count": len(reports), "source": "Audited FEC electronic filings",
         "geography": "Reported contributor state and ZIP matched to 2020 Census ZCTA",
     }
-    write_data(args.out, data, states, meta, filings)
+    publish(data, states, meta, filings, args.out)
     print(len(data), "state-ZIP-candidate-period groups", len(reports), "filings")
 
 
