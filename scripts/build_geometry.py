@@ -1,7 +1,7 @@
-"""Create compact, per-state 2020 ZCTA geometry for the static map.
+"""Create detailed, per-state 2020 ZCTA geometry for the static map.
 
-Run only when the Census cartographic boundaries need updating. Input archives:
-https://www2.census.gov/geo/tiger/GENZ2020/shp/cb_2020_us_zcta520_500k.zip
+Run only when the Census boundaries need updating. Input archives:
+https://www2.census.gov/geo/tiger/TIGER2020/ZCTA520/tl_2020_us_zcta520.zip
 https://www2.census.gov/geo/tiger/GENZ2020/shp/cb_2020_us_state_500k.zip
 """
 
@@ -32,7 +32,7 @@ def compact_feature(geometry, properties, tolerance=None):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--zctas", default="zctas.zip")
+    parser.add_argument("--zctas", default="tiger_zctas.zip")
     parser.add_argument("--states", default="states.zip")
     parser.add_argument("--out", default="data")
     args = parser.parse_args()
@@ -61,9 +61,9 @@ def main():
     assert assignment.notna().all() and len(assignment) == len(zctas)
     zctas["state"] = assignment
     for code, rows in zctas.groupby("state"):
-        # The Census source is already generalized at 1:500,000. Additional
-        # simplification erases urban ZCTA boundaries at street-level zoom.
-        features = [compact_feature(row.geometry, {"zip": row.ZCTA5CE20}) for row in rows.itertuples()]
+        # TIGER/Line retains the original detailed boundaries. About 10 meters
+        # of simplification controls download size without losing city blocks.
+        features = [compact_feature(row.geometry, {"zip": row.ZCTA5CE20}, 0.0001) for row in rows.itertuples()]
         features = [feature for feature in features if feature is not None]
         payload = json.dumps({"type": "FeatureCollection", "features": features}, separators=(",", ":")).encode()
         (out / "zctas" / f"{code}.bin").write_bytes(gzip.compress(payload, compresslevel=9, mtime=0))

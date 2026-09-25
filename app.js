@@ -13,7 +13,7 @@ map.setView([31, -99], 5);
 const tiles = L.tileLayer('https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}', {
   maxZoom: 12, opacity: .5, attribution: 'Basemap: <a href="https://www.usgs.gov/programs/national-geospatial-program/national-map" target="_blank" rel="noopener">USGS The National Map</a>'
 }).addTo(map);
-map.attributionControl.setPrefix('<a href="https://leafletjs.com/" target="_blank" rel="noopener">Leaflet</a> · <a href="https://www.census.gov/geographies/mapping-files/time-series/geo/cartographic-boundary.html" target="_blank" rel="noopener">Census ZCTAs</a>');
+map.attributionControl.setPrefix('<a href="https://leafletjs.com/" target="_blank" rel="noopener">Leaflet</a> · <a href="https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.2020.html" target="_blank" rel="noopener">Census ZCTAs</a>');
 
 function csv(text) {
   const lines = text.trim().split(/\r?\n/), head = lines.shift().split(',');
@@ -98,7 +98,7 @@ async function openState(code, fit = true) {
   $('scope').textContent = `Loading ${state.statesByCode[code]}…`;
   try {
     let geo = state.zctas.get(code);
-    if (!geo) { geo = await packed(`data/zctas/${encodeURIComponent(code)}.bin?v=2`); state.zctas.set(code, geo); }
+    if (!geo) { geo = await packed(`data/zctas/${encodeURIComponent(code)}.bin?v=3`); state.zctas.set(code, geo); }
     if (state.pending.get(code) !== request) return;
     const layer = L.geoJSON(geo, {
       pane: 'zctaPane', smoothFactor: .5, style: feature => zctaStyle(code, feature),
