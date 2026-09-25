@@ -9,6 +9,7 @@ import io
 import json
 import os
 import re
+import sys
 import tempfile
 import time
 import urllib.parse
@@ -22,6 +23,12 @@ CANDIDATES = {"C00919084": "James Talarico", "C00369033": "John Cornyn", "C00901
 PHASES = ("pre_primary", "between_primary_runoff", "post_runoff")
 HEADER = ("state", "zip", "candidate", "phase", "positive_cents", "net_cents", "count")
 START = date(2025, 1, 1)
+# Map level -> (HUD crosswalk CSV, pattern a mappable geoid must match).
+LEVELS = {"county": ("ZIP-COUNTY.csv", r"\d{5}"), "cd": ("ZIP-CD.csv", r"\d{4}"),
+          "cbsa": ("ZIP-CBSA.csv", r"(?!99999)\d{5}"), "cousub": ("ZIP-COUNTY-SUB.csv", r"\d{10}")}
+LEVEL_HEADER = ("geoid", "candidate", "phase", "positive_cents", "net_cents", "count")
+UNALLOCATED_HEADER = ("level", "state", "candidate", "phase", "positive_cents", "net_cents", "count")
+CD_VINTAGE = "119th Congress districts (Census cb_2024_us_cd119_500k), as used by the HUD 06/2026 ZIP-CD crosswalk"
 
 
 def phase_for(day):
@@ -142,8 +149,106 @@ def write_data(out, data, states, meta, filings):
     (out / "filings.json").write_text(json.dumps(filings, indent=2) + "\n")
 
 
+def load_crosswalk(path):
+    """ZIP -> [(geoid, weight)], weights normalized to sum to 1.
+
+    res_ratio is the weight; a ZIP with no residential addresses (PO box or
+    business-only) falls back to tot_ratio.
+    """
+    rows = defaultdict(list)
+    with path.open(newline="") as f:
+        for row in csv.DictReader(f):
+            rows[row["zip"]].append((row["geoid"], float(row["res_ratio"]), float(row["tot_ratio"])))
+    result = {}
+    for zip5, items in rows.items():
+        column = 1 if sum(item[1] for item in items) > 0 else 2
+        total = sum(item[column] for item in items)
+        if total > 0:
+            result[zip5] = [(item[0], item[column] / total) for item in items if item[column] > 0]
+    return result
+
+
+def split(amount, weights):
+    """Split an integer across weights; the rounding remainder goes to the largest share."""
+    shares = [round(amount * weight) for weight in weights]
+    shares[max(range(len(weights)), key=weights.__getitem__)] += amount - sum(shares)
+    return shares
+
+
+def allocate_levels(receipts_csv, crosswalks, out):
+    """Apportion ZIP receipts to each HUD crosswalk geography and write data/levels/*.csv.
+
+    Counts are split in hundredths, so they are written with two decimals.
+    Placeholder geoids (containing '*', CBSA 99999, malformed codes) keep their
+    dollars in levels/unallocated.csv by reported state.
+    """
+    with receipts_csv.open(newline="") as f:
+        receipts = [(row["state"], row["zip"], row["candidate"], row["phase"],
+                     int(row["positive_cents"]), int(row["net_cents"]), round(float(row["count"]) * 100))
+                    for row in csv.DictReader(f)]
+    out.mkdir(parents=True, exist_ok=True)
+    unallocated = defaultdict(lambda: [0, 0, 0])
+    for level, (filename, pattern) in LEVELS.items():
+        crosswalk = load_crosswalk(crosswalks / filename)
+        totals = defaultdict(lambda: [0, 0, 0])
+        matched = 0
+        for state, zip5, candidate, phase, *values in receipts:
+            parts = crosswalk.get(zip5)
+            if not parts:
+                continue
+            matched += values[0]
+            splits = [split(value, [weight for _, weight in parts]) for value in values]
+            for index, (geoid, _) in enumerate(parts):
+                bucket = totals[geoid, candidate, phase] if re.fullmatch(pattern, geoid) else unallocated[level, state, candidate, phase]
+                for i in range(3):
+                    bucket[i] += splits[i][index]
+        placed = sum(value[0] for value in totals.values())
+        dropped = sum(value[0] for key, value in unallocated.items() if key[0] == level)
+        if placed + dropped != matched:
+            raise RuntimeError(f"{level} allocation does not reconcile: {placed} + {dropped} vs {matched} cents")
+        with (out / f"{level}.csv").open("w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(LEVEL_HEADER)
+            writer.writerows((*key, value[0], value[1], f"{value[2] / 100:.2f}")
+                             for key, value in sorted(totals.items()) if any(value))
+        print(level, len(totals), "areas;", placed, "of", matched, "matched cents mapped", flush=True)
+    with (out / "unallocated.csv").open("w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(UNALLOCATED_HEADER)
+        writer.writerows((*key, value[0], value[1], f"{value[2] / 100:.2f}")
+                         for key, value in sorted(unallocated.items()) if any(value))
+
+
+LEVEL_FILES = [f"levels/{level}.csv" for level in LEVELS] + ["levels/unallocated.csv"]
+
+
+def publish(data, states, meta, filings, out):
+    """Stage every output in a temp dir, then replace the tracked files."""
+    meta = {**meta, "cd_vintage": CD_VINTAGE,
+            "levels": "ZIP totals apportioned by HUD USPS ZIP crosswalk residential address shares (06/2026)"}
+    with tempfile.TemporaryDirectory() as temp:
+        staged = Path(temp)
+        write_data(staged, data, states, meta, filings)
+        allocate_levels(staged / "receipts.csv", out / "crosswalks", staged / "levels")
+        (out / "levels").mkdir(exist_ok=True)
+        for filename in ("receipts.csv", "state_totals.csv", "coverage.json", "filings.json", *LEVEL_FILES):
+            os.replace(staged / filename, out / filename)
+
+
+def rebuild_levels(out):
+    """Regenerate only data/levels/*.csv from the current receipts.csv (e.g. after a new HUD quarter)."""
+    with tempfile.TemporaryDirectory() as temp:
+        allocate_levels(out / "receipts.csv", out / "crosswalks", Path(temp))
+        (out / "levels").mkdir(exist_ok=True)
+        for filename in LEVEL_FILES:
+            os.replace(Path(temp) / filename.split("/")[1], out / filename)
+
+
 def main():
     out = Path(__file__).resolve().parents[1] / "data"
+    if "--levels-only" in sys.argv[1:]:
+        rebuild_levels(out)
+        return
     key = os.environ.get("FEC_API_KEY") or "DEMO_KEY"
     inventories = inventory(key)
     current = out / "filings.json"
@@ -163,11 +268,7 @@ def main():
             "coverage_end": max(r["coverage_end"] for r in audit), "filing_count": len(audit),
             "source": "FEC electronic filings", "geography": "Reported contributor state and ZIP matched to 2020 Census ZCTA"}
     # Validate the entire new snapshot before replacing any tracked output.
-    with tempfile.TemporaryDirectory() as temp:
-        staged = Path(temp)
-        write_data(staged, data, states, meta, {"committees": signature(inventories), "reports": audit})
-        for filename in ("receipts.csv", "state_totals.csv", "coverage.json", "filings.json"):
-            os.replace(staged / filename, out / filename)
+    publish(data, states, meta, {"committees": signature(inventories), "reports": audit}, out)
     print("Published through", meta["coverage_end"])
 
 

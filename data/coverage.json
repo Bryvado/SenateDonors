@@ -4,5 +4,7 @@
   "coverage_end": "2026-06-30",
   "filing_count": 20,
   "source": "Audited FEC electronic filings",
-  "geography": "Reported contributor state and ZIP matched to 2020 Census ZCTA"
+  "geography": "Reported contributor state and ZIP matched to 2020 Census ZCTA",
+  "cd_vintage": "119th Congress districts (Census cb_2024_us_cd119_500k), as used by the HUD 06/2026 ZIP-CD crosswalk",
+  "levels": "ZIP totals apportioned by HUD USPS ZIP crosswalk residential address shares (06/2026)"
 }
