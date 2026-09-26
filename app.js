@@ -38,7 +38,8 @@ const stats = {
   count: {label: () => 'Contributions', value: (a, b) => a[2] + b[2], log: true, format: (v) => people(v)},
 };
 const state = {span: [0, 3], first: 'C00919084', second: 'C00901918', measure: 'lead', level: 'zcta',
-  selected: [], nationwide: false, receipts: new Map(), totals: new Map(), areas: {}, unallocated: new Map(),
+  selected: [], lastSelected: ['TX'], lastLocalLevel: 'zcta', focused: null, nationwide: false,
+  receipts: new Map(), totals: new Map(), areas: {}, unallocated: new Map(),
   population: {}, monthly: null, months: [], geo: new Map(), layer: null, index: new Map(), render: 0, states: null,
   coverage: null, breaks: [], fade: null, chartMode: 'monthly', timeline: false, timeIndex: 0, timeMode: 'cumulative',
   rankBy: 'total', rankDesc: true, rankStates: false,
@@ -199,7 +200,9 @@ function areaAmounts(level, feature) {
 function areaStyle(level, feature) {
   const {pop} = areaKey(level, feature), amounts = areaAmounts(level, feature);
   if (!hasReceipts(amounts)) return {pane: 'zctaPane', stroke: false, fill: false};
-  return {pane: 'zctaPane', stroke: true, fill: true, color: '#56696f', weight: level === 'zcta' || level === 'cousub' ? .35 : .6, opacity: .5,
+  const focused = state.focused?.level === level && state.focused.key === areaKey(level, feature).key;
+  return {pane: 'zctaPane', stroke: true, fill: true, color: focused ? '#10212b' : '#56696f',
+    weight: focused ? 2.2 : level === 'zcta' || level === 'cousub' ? .35 : .6, opacity: focused ? 1 : .5,
     ...paint(amounts, population(level, pop))};
 }
 function syncInteractivity() {
@@ -317,7 +320,7 @@ async function render(fit = false) {
           const {store, key, pop} = areaKey(level, feature);
           return tooltip(level, areaTitle(level, feature), comparison(store, key), population(level, pop));
         }, {sticky: true, direction: 'top'});
-        // A single click zooms in (or opens the state when nationwide); a quick double click resets to the U.S.
+        // A single click focuses an area (or opens its state in nationwide view).
         let single;
         polygon.on('click', e => {
           L.DomEvent.stopPropagation(e);
@@ -325,7 +328,7 @@ async function render(fit = false) {
           const add = modifier(e);
           single = setTimeout(() => {
             if (state.nationwide || add) chooseState(p._state || p.states[0], add);
-            else map.fitBounds(polygon.getBounds(), {padding: [55, 55], maxZoom: 10});
+            else focusArea(level, feature, polygon);
           }, 250);
         });
         polygon.on('dblclick', e => { L.DomEvent.stopPropagation(e); clearTimeout(single); resetView(); });
@@ -347,31 +350,66 @@ function fitPadding(maxZoom) {
   return {paddingTopLeft: [40, 90], paddingBottomRight: [right, 50], maxZoom};
 }
 const modifier = (e) => { const o = e.originalEvent || e; return o.shiftKey || o.ctrlKey || o.metaKey; };
+function clearFocus() {
+  const old = state.focused;
+  state.focused = null;
+  if (old) {
+    const polygon = state.index.get(old.key);
+    if (polygon && state.layer?.level === old.level) polygon.setStyle(areaStyle(old.level, polygon.feature));
+  }
+}
+function focusArea(level, feature, polygon) {
+  clearFocus();
+  state.focused = {level, key: areaKey(level, feature).key, title: areaTitle(level, feature)};
+  polygon.setStyle(areaStyle(level, feature));
+  polygon.bringToFront();
+  map.fitBounds(polygon.getBounds(), fitPadding(10));
+  updateScope();
+}
+function returnToSelection() {
+  clearFocus();
+  if (state.layer?.getLayers().length) map.fitBounds(state.layer.getBounds(), fitPadding(8));
+  updateScope();
+}
 function chooseState(code, add) {
   if (!state.statesByCode[code]) return;
+  clearFocus();
   state.nationwide = false;
   if (!add) state.selected = [code];
   else if (state.selected.includes(code)) state.selected = state.selected.filter(c => c !== code);
   else state.selected = [...state.selected, code];
+  if (state.selected.length) { state.lastSelected = [...state.selected]; state.lastLocalLevel = state.level; }
   syncControls();
   if (!state.selected.length) { map.fitBounds(CONUS, fitPadding(4.5)); render(); } else render(true);
 }
 function resetView() {
+  if (state.selected.length) state.lastSelected = [...state.selected];
+  clearFocus();
   state.selected = []; state.nationwide = false;
   syncControls(); map.fitBounds(CONUS, fitPadding(4.5)); render();
 }
 function setNationwide(on) {
-  state.nationwide = on;
-  if (on && !levels[state.level].national) state.level = 'county';
-  syncControls();
-  map.fitBounds(CONUS, fitPadding(4.5));
-  render(!on && state.selected.length > 0);
+  setGeography(on ? `nation:${levels[state.level].national ? state.level : 'county'}` : `states:${state.lastLocalLevel}`);
 }
 function setLevel(level) {
+  if (!state.selected.length && !state.nationwide && levels[level].national) return setGeography(`nation:${level}`);
+  return setGeography(`${state.nationwide && levels[level].national ? 'nation' : 'states'}:${level}`);
+}
+function setGeography(choice) {
+  if (choice === 'overview') return resetView();
+  const [scope, level] = choice.split(':');
+  if (!levels[level] || (scope === 'nation' && !levels[level].national)) return;
+  const wasNationwide = state.nationwide, wasLocal = !state.nationwide && state.selected.length > 0;
+  clearFocus();
   state.level = level;
-  if (state.nationwide && !levels[level].national) state.nationwide = false;
+  state.nationwide = scope === 'nation';
+  if (!state.nationwide) {
+    if (!state.selected.length) state.selected = [...state.lastSelected];
+    state.lastLocalLevel = level;
+  }
   syncControls();
-  render();
+  if (state.nationwide && !wasNationwide) map.fitBounds(CONUS, fitPadding(4.5));
+  render(!state.nationwide && !wasLocal);
 }
 // Each candidate list leaves out whoever is picked in the other one.
 function syncCandidates() {
@@ -379,17 +417,26 @@ function syncCandidates() {
     $(id).innerHTML = order.filter(c => c !== state[other]).map(c => `<option value="${c}"${c === state[id] ? ' selected' : ''}>${names[c]}</option>`).join('');
 }
 function syncControls() {
-  $('view').value = state.nationwide ? 'nation' : 'states';
-  $('level').value = state.level;
+  $('geography').value = state.nationwide ? `nation:${state.level}` : state.selected.length ? `states:${state.level}` : 'overview';
   $('nation').setAttribute('aria-pressed', String(state.nationwide));
-  for (const option of $('level').options) option.disabled = state.nationwide && !levels[option.value].national;
 }
 function updateScope(loading) {
-  const label = levels[state.level].label;
-  if (loading) { $('scope').textContent = `Loading ${label}…`; return; }
-  if (state.timeline) { $('scope').textContent = `States · ${state.timeMode === 'month' ? '' : 'through '}${monthLabel(timeMonth(), 'long')}`; return; }
-  $('scope').textContent = state.nationwide ? `United States · ${label}` : state.selected.length
-    ? `${state.selected.map(c => state.statesByCode[c]).join(' · ')} · ${label}` : `United States · click a state to open its ${label}`;
+  const node = $('scope'), label = levels[state.level].label;
+  node.replaceChildren();
+  if (loading) { node.textContent = `Loading ${label}…`; return; }
+  if (state.timeline) { node.textContent = `States · ${state.timeMode === 'month' ? '' : 'through '}${monthLabel(timeMonth(), 'long')}`; return; }
+  if (!state.nationwide && !state.selected.length) { node.textContent = 'U.S. states · click a state to open areas'; return; }
+  const step = (name, action) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'crumb'; b.textContent = name; b.addEventListener('click', action);
+    node.append(b);
+  };
+  const separator = () => { const s = document.createElement('span'); s.className = 'crumb-separator'; s.textContent = '›'; node.append(s); };
+  step('U.S. states', resetView); separator();
+  if (state.nationwide) { node.append(`Nationwide ${label}`); return; }
+  const selected = state.selected.length > 2 ? `${state.selected.length} states` : state.selected.map(c => state.statesByCode[c]).join(' + ');
+  if (state.focused) { step(selected, returnToSelection); separator(); node.append(`${label} › ${state.focused.title}`); }
+  else node.append(`${selected} · ${label}`);
 }
 
 /* Legend */
@@ -497,7 +544,7 @@ function updatePanel() {
   const H = Math.round(Math.max(110, Math.min(420, Math.max(W * .42, tall))));
   box.style.setProperty('--columns', columns);
   box.innerHTML = cards.map(([codes, title, removable, code]) => summary(codes, title, removable, code, W, H)).join('') +
-    `<p class="hint">Click a state to open it. Shift-, Ctrl- or ⌘-click adds it. Double-click any area to return to the U.S. Drag panels by their title; resize from the corner.</p>`;
+    `<p class="hint">Click a state to open it. Shift-, Ctrl- or ⌘-click adds it. Use Map view to switch geography and the location path to step back. Drag panels by their title; resize from the corner.</p>`;
   box.querySelectorAll('.card').forEach((card, i) => bindChart(card, state.monthly ? series(cards[i][0]) : []));
   $('add-state').innerHTML = '<option value="">+ Add state…</option>' +
     (state.nationwide ? '' : '<option value="ALL">All states (nationwide)</option>') + Object.entries(state.statesByCode)
@@ -775,8 +822,9 @@ async function start() {
   if (window.innerWidth <= 850) { $('side').classList.add('collapsed'); $('side-toggle').setAttribute('aria-expanded', 'false'); }
   for (const id of PANELS) floating($(id));
   syncCandidates();
+  state.selected = ['TX'];
   syncControls();
-  await render();
+  await render(true);
 }
 
 function periodInput(which) {
@@ -797,8 +845,7 @@ $('measure').addEventListener('change', async e => {
   try { await loadLevel(state.level); } catch (error) { showError(error); }
   refresh();
 });
-$('level').addEventListener('change', e => setLevel(e.target.value));
-$('view').addEventListener('change', e => setNationwide(e.target.value === 'nation'));
+$('geography').addEventListener('change', e => setGeography(e.target.value));
 for (const id of ['first', 'second']) $(id).addEventListener('change', e => { state[id] = e.target.value; syncCandidates(); refresh(); });
 $('add-state').addEventListener('change', e => {
   const value = e.target.value;
@@ -835,7 +882,7 @@ $('rank-list').addEventListener('click', e => {
   if (!li) return;
   if (li.dataset.state) return chooseState(li.dataset.key, modifier(e));
   const polygon = state.index.get(li.dataset.key);
-  if (polygon) { map.fitBounds(polygon.getBounds(), fitPadding(10)); polygon.openTooltip(polygon.getBounds().getCenter()); }
+  if (polygon) { focusArea(state.layer.level, polygon.feature, polygon); polygon.openTooltip(polygon.getBounds().getCenter()); }
 });
 $('filter-stat').addEventListener('click', e => { const stat = e.target.dataset?.stat; if (stat) { state.filter.stat = stat; refresh(); } });
 $('filter-lo').addEventListener('input', () => filterInput('lo'));
@@ -858,5 +905,10 @@ $('tiles').addEventListener('click', () => {
 function about(open) { $('about').hidden = !open; $('about-toggle').setAttribute('aria-expanded', String(open)); }
 $('about-toggle').addEventListener('click', () => about($('about').hidden));
 $('about-close').addEventListener('click', () => about(false));
-document.addEventListener('keydown', e => {if (e.key === 'Escape') about(false);});
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || e.target.closest('select, input')) return;
+  if (!$('about').hidden) return about(false);
+  if (state.focused) return returnToSelection();
+  if (state.selected.length || state.nationwide) resetView();
+});
 start().catch(showError);
