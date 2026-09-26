@@ -20,7 +20,12 @@ const short = (n) => n >= 1e6 ? '$' + +(n / 1e6).toFixed(1) + 'm' : n >= 1e3 ? '
 const people = (n) => n >= 1e6 ? +(n / 1e6).toFixed(1) + 'm' : n >= 1e3 ? +(n / 1e3).toFixed(1) + 'k' : String(Math.round(n));
 const monthLabel = (m, style = 'short') => new Date(m + '-15').toLocaleDateString('en-US', {month: style, year: 'numeric'});
 // Dark theme: weak values fade toward the map background; no-receipt places are grey.
-const NEUTRAL = '#5d656c', PALE = '#1b2329', EMPTY = '#3a4248', INK = '#f2f6f8', LINE = '#0c1115', CONUS = [[24, -125], [50, -66]];
+const themes = {
+  dark: {NEUTRAL: '#5d656c', PALE: '#1b2329', EMPTY: '#3a4248', INK: '#f2f6f8', LINE: '#0c1115', EDGE: '#56656e', CONTEXT: '#10171c'},
+  light: {NEUTRAL: '#d9d3cb', PALE: '#f4f2ef', EMPTY: '#cfd5d8', INK: '#10212b', LINE: '#56696f', EDGE: '#7d8e95', CONTEXT: '#ffffff'},
+};
+let NEUTRAL, PALE, EMPTY, INK, LINE, EDGE, CONTEXT;
+const CONUS = [[24, -125], [50, -66]];
 const levels = {
   zcta: {label: 'ZCTAs', noun: 'ZCTA', title: 'ZIP (ZCTA)', national: true, detail: true},
   county: {label: 'counties', noun: 'county', title: 'County', national: true},
@@ -189,8 +194,8 @@ function paint(amounts, pop) {
 }
 function stateStyle(feature) {
   const code = feature.properties.code, chosen = !state.timeline && !state.nationwide && state.selected.includes(code);
-  const base = {pane: 'statePane', color: chosen ? INK : '#56656e', weight: chosen ? 2.4 : .7, opacity: .9};
-  if (!statesColored()) return {...base, fillColor: '#10171c', fillOpacity: chosen || state.nationwide ? 0 : .55};
+  const base = {pane: 'statePane', color: chosen ? INK : EDGE, weight: chosen ? 2.4 : .7, opacity: .9};
+  if (!statesColored()) return {...base, fillColor: CONTEXT, fillOpacity: chosen || state.nationwide ? 0 : .55};
   const amounts = stateAmounts(code);
   if (!hasReceipts(amounts) && !state.showEmpty) return {...base, fillOpacity: 0};
   return {...base, ...paint(amounts, population('state', code))};
@@ -568,7 +573,8 @@ function updateLegend() {
 function fitLegend() {
   const legend = $('legend'), foot = $('foot');
   legend.style.left = foot.style.left = '';
-  if (window.innerWidth <= 850) { legend.style.maxHeight = ''; return; }
+  if (window.innerWidth <= 850) { legend.style.maxHeight = $('tools').style.top = ''; return; }
+  $('tools').style.top = (document.querySelector('.map-actions').getBoundingClientRect().bottom + 12) + 'px';
   const tools = $('tools').getBoundingClientRect();
   let room = foot.getBoundingClientRect().top - tools.bottom - 20;
   if (room < 110) {
@@ -1032,6 +1038,14 @@ $('legend').addEventListener('click', e => {
   else if (e.target.closest('.legend-title')) $('legend').classList.toggle('collapsed');
 });
 window.addEventListener('resize', fitLegend);
+function setTheme(name) {
+  ({NEUTRAL, PALE, EMPTY, INK, LINE, EDGE, CONTEXT} = themes[name]);
+  document.documentElement.classList.toggle('dark', name === 'dark');
+  $('theme').setAttribute('aria-pressed', String(name === 'dark'));
+  try { localStorage.setItem('theme', name); } catch {}
+  refresh();
+}
+$('theme').addEventListener('click', () => setTheme(document.documentElement.classList.contains('dark') ? 'light' : 'dark'));
 $('home').addEventListener('click', resetView);
 $('nation').addEventListener('click', () => setNationwide(!state.nationwide));
 $('zoom-in').addEventListener('click', () => map.zoomIn());
@@ -1053,4 +1067,5 @@ document.addEventListener('keydown', e => {
   if (state.focused) return returnToSelection();
   if (state.selected.length || state.nationwide) resetView();
 });
+{ let saved = null; try { saved = localStorage.getItem('theme'); } catch {} setTheme(themes[saved] ? saved : 'dark'); }
 start().catch(showError);

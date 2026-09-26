@@ -55,28 +55,28 @@ button:focus-visible,select:focus-visible,a:focus-visible{outline:3px solid #288
 @media(max-width:850px){.control.period{width:100%;min-width:0}}
 @media(max-width:850px){.control.period{flex:1 1 100%!important;max-width:none}}
 .ticks8{display:grid;grid-template-columns:repeat(8,1fr);gap:2px;margin-top:3px;font-size:9.5px;color:#586970;text-align:center}.ticks8 span:nth-child(4){border-right:1px solid #9aa8ad}
-/* Dark theme */
-:root{color:#e3e9ec;background:#0f151a}
-#map{background:#0f151a}.leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) saturate(.15) brightness(.75) contrast(.9)}
-.panel{background:rgba(20,27,33,.9);border-color:rgba(255,255,255,.09);box-shadow:0 6px 24px rgba(0,0,0,.45)}
-.brand span,.versus,.grip,.rank-n,.crumb-separator{color:#7e8f97}.separator{background:#34414a}
-.control,.float-title,.rank-by,.filter-ends,.foot,.muted,.hint,.muted-cell,.tooltip-sub,.about .small,.legend-note,.ticks,.ticks8,.period-ticks,.stat-row span,.bars li>span:last-child{color:#93a3ab}
-.control select,.control.period b,.card h2,.card[data-code=all] h2,.stat-row b,#time-label,.filter-ends b,.about h1,.tooltip-title,.check,.tools button,.about{color:#e3e9ec}
-.control select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='11' height='7' viewBox='0 0 11 7'%3E%3Cpath d='m1 1 4.5 4.5L10 1' fill='none' stroke='%2393a3ab' stroke-width='1.5'/%3E%3C/svg%3E")}
-.control select option{background:#141b21;color:#e3e9ec}.control select:hover{color:#8cc8ec}
-.icon{border-color:#3a4750}.map-actions > button{border-bottom-color:#2a353d;color:#e3e9ec}.map-actions > button[aria-pressed="false"]{color:#6f8089}.map-actions > .state-switch,.tooltip-hint,.filter-note,.text-btn,.about a{color:#7cc0ea}
-.map-actions > button:hover,.icon:hover,.close:hover,.head-btn:hover,.tools button:hover,.rank-list li:hover,.rank-list li:focus,.bars li.pick:hover{background:rgba(255,255,255,.07)}
-.tools button span,.head-btn,.remove{color:#93a3ab}.tools button[aria-pressed=true],.seg button[aria-pressed=true],.play,.state-menu-foot button:last-child{background:#2f7fc0;color:#fff;border-color:#2f7fc0}.tools button[aria-pressed=true] span{color:#d8ecf8}
-.float-head,.card{border-color:#2a353d}.seg,.seg button+button{border-color:#34414a}.seg button{background:#1b242b;color:#b6c3c9}
-.rank-by select,.add-state,.state-menu input[type=search],.state-menu button{background:#1b242b;border-color:#34414a;color:#e3e9ec}
-.state-menu{background:#141b21;border-color:#34414a;color:#e3e9ec}.state-options,.state-options label{border-color:#2a353d}.state-options label:hover{background:#1f2a31}
-.stat-row div{background:#1b242b}.bars .bar,.period-track,.dual::before{background:#2a353d}.hist rect.in{fill:#5b8fd6}.hist rect.out{fill:#2f3a42}
-.chart .axis,.chart .event-label{fill:#93a3ab}.chart .base{stroke:#56656e}.chart .grid{stroke:#26313a}.chart .event{stroke:#6f8089}.chart .band{fill:#1c2a35}.chart .cursor,.chart .now{stroke:#e3e9ec}
-.chart-tip,.leaflet-tooltip{background:#1b242b;border-color:#34414a;color:#e3e9ec;box-shadow:0 6px 22px rgba(0,0,0,.5)}.leaflet-tooltip-top:before{border-top-color:#34414a}
-.foot>span+span{border-color:#34414a}.foot .crumb{color:#7cc0ea}.foot .crumb:hover{background:#1f2a31}
-.swatch{border-color:#4a565e}.error{color:#ff8c9a}
-.leaflet-control-attribution{background:rgba(15,21,26,.75)!important;color:#7e8f97!important}.leaflet-control-attribution a{color:#7cc0ea!important}
-.period-slider input::-webkit-slider-thumb{background:#0f151a;border-color:#e3e9ec}.period-slider input::-moz-range-thumb{background:#0f151a;border-color:#e3e9ec}.period-fill{background:#e3e9ec}
+/* Dark theme (html.dark, toggled by the ◐ button) */
+html.dark{color:#e3e9ec;background:#0f151a}
+html.dark #map{background:#0f151a}html.dark .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) saturate(.15) brightness(.75) contrast(.9)}
+html.dark .panel{background:rgba(20,27,33,.9);border-color:rgba(255,255,255,.09);box-shadow:0 6px 24px rgba(0,0,0,.45)}
+html.dark .brand span,html.dark .versus,html.dark .grip,html.dark .rank-n,html.dark .crumb-separator{color:#7e8f97}html.dark .separator{background:#34414a}
+html.dark .control,html.dark .float-title,html.dark .rank-by,html.dark .filter-ends,html.dark .foot,html.dark .muted,html.dark .hint,html.dark .muted-cell,html.dark .tooltip-sub,html.dark .about .small,html.dark .legend-note,html.dark .ticks,html.dark .ticks8,html.dark .period-ticks,html.dark .stat-row span,html.dark .bars li>span:last-child{color:#93a3ab}
+html.dark .control select,html.dark .control.period b,html.dark .card h2,html.dark .card[data-code=all] h2,html.dark .stat-row b,html.dark #time-label,html.dark .filter-ends b,html.dark .about h1,html.dark .tooltip-title,html.dark .check,html.dark .tools button,html.dark .about{color:#e3e9ec}
+html.dark .control select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='11' height='7' viewBox='0 0 11 7'%3E%3Cpath d='m1 1 4.5 4.5L10 1' fill='none' stroke='%2393a3ab' stroke-width='1.5'/%3E%3C/svg%3E")}
+html.dark .control select option{background:#141b21;color:#e3e9ec}html.dark .control select:hover{color:#8cc8ec}
+html.dark .icon{border-color:#3a4750}html.dark .map-actions > button{border-bottom-color:#2a353d;color:#e3e9ec}html.dark .map-actions > button[aria-pressed="false"]{color:#6f8089}html.dark .map-actions > .state-switch,html.dark .tooltip-hint,html.dark .filter-note,html.dark .text-btn,html.dark .about a{color:#7cc0ea}
+html.dark .map-actions > button:hover,html.dark .icon:hover,html.dark .close:hover,html.dark .head-btn:hover,html.dark .tools button:hover,html.dark .rank-list li:hover,html.dark .rank-list li:focus,html.dark .bars li.pick:hover{background:rgba(255,255,255,.07)}
+html.dark .tools button span,html.dark .head-btn,html.dark .remove{color:#93a3ab}html.dark .tools button[aria-pressed=true],html.dark .seg button[aria-pressed=true],html.dark .play,html.dark .state-menu-foot button:last-child{background:#2f7fc0;color:#fff;border-color:#2f7fc0}html.dark .tools button[aria-pressed=true] span{color:#d8ecf8}
+html.dark .float-head,html.dark .card{border-color:#2a353d}html.dark .seg,html.dark .seg button+button{border-color:#34414a}html.dark .seg button{background:#1b242b;color:#b6c3c9}
+html.dark .rank-by select,html.dark .add-state,html.dark .state-menu input[type=search],html.dark .state-menu button{background:#1b242b;border-color:#34414a;color:#e3e9ec}
+html.dark .state-menu{background:#141b21;border-color:#34414a;color:#e3e9ec}html.dark .state-options,html.dark .state-options label{border-color:#2a353d}html.dark .state-options label:hover{background:#1f2a31}
+html.dark .stat-row div{background:#1b242b}html.dark .bars .bar,html.dark .period-track,html.dark .dual::before{background:#2a353d}html.dark .hist rect.in{fill:#5b8fd6}html.dark .hist rect.out{fill:#2f3a42}
+html.dark .chart .axis,html.dark .chart .event-label{fill:#93a3ab}html.dark .chart .base{stroke:#56656e}html.dark .chart .grid{stroke:#26313a}html.dark .chart .event{stroke:#6f8089}html.dark .chart .band{fill:#1c2a35}html.dark .chart .cursor,html.dark .chart .now{stroke:#e3e9ec}
+html.dark .chart-tip,html.dark .leaflet-tooltip{background:#1b242b;border-color:#34414a;color:#e3e9ec;box-shadow:0 6px 22px rgba(0,0,0,.5)}html.dark .leaflet-tooltip-top:before{border-top-color:#34414a}
+html.dark .foot>span+span{border-color:#34414a}html.dark .foot .crumb{color:#7cc0ea}html.dark .foot .crumb:hover{background:#1f2a31}
+html.dark .swatch{border-color:#4a565e}html.dark .error{color:#ff8c9a}
+html.dark .leaflet-control-attribution{background:rgba(15,21,26,.75)!important;color:#7e8f97!important}html.dark .leaflet-control-attribution a{color:#7cc0ea!important}
+html.dark .period-slider input::-webkit-slider-thumb{background:#0f151a;border-color:#e3e9ec}html.dark .period-slider input::-moz-range-thumb{background:#0f151a;border-color:#e3e9ec}html.dark .period-fill{background:#e3e9ec}
 /* Legend fits between the panel buttons and the footer; title click collapses it */
 .legend{overflow:auto}.legend-title{cursor:pointer;user-select:none}.legend-title::after{content:'−';float:right;color:#93a3ab;font-weight:500}.legend.collapsed .legend-title::after,.legend.squeezed:not(.expanded) .legend-title::after{content:'+'}.legend.collapsed>:not(.legend-title),.legend.squeezed>.legend-note:not(.empty-toggle),.legend.squeezed>.fade-row{display:none}.legend.collapsed .legend-title{margin:0}
 .empty-toggle{display:flex;align-items:center;gap:6px;width:100%;margin-top:8px;padding:0;border:0;background:none;color:#b6c3c9;font-size:11px}.empty-toggle i{margin-left:auto;width:24px;height:14px;border-radius:7px;background:#34414a;position:relative;transition:background .15s}.empty-toggle i::after{content:'';position:absolute;top:2px;left:2px;width:10px;height:10px;border-radius:50%;background:#93a3ab;transition:transform .15s}.empty-toggle[aria-checked=true] i{background:#2f7fc0}.empty-toggle[aria-checked=true] i::after{transform:translateX(10px);background:#fff}
