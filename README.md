@@ -2,7 +2,7 @@
 
 Full-screen map of individual, itemized contributions to the principal federal campaign committees of James Talarico, John Cornyn, and Ken Paxton. [Open the map](https://bryvado.github.io/SenateDonors/).
 
-The map opens on Texas. **Map view** switches directly among areas within selected states, U.S. states, and nationwide counties, congressional districts, or metro areas. Switching area types in the same scope keeps the current map position. The location path at the bottom left steps back from an area to the selected states or U.S. overview. Click a state to show it alone, or Shift-click to add it; click an area to focus it. Returning to a selected-state view restores the last selection, or Texas if there was none. Choose a period, two candidates, and a color measure from the masthead. The USGS basemap can be switched off.
+The map opens on Texas. **Map view** switches directly among areas within selected states, U.S. states, and nationwide counties, congressional districts, or metro areas. The compact state selector beside the left map controls jumps directly to any state. Switching area types in the same scope keeps the current map position. The location path at the bottom left steps back from an area to the selected states or U.S. overview. Click a state to show it alone, or Shift-click to add it; click an area to focus it. Returning to a selected-state view restores the last selection, or Texas if there was none. Choose a period, two candidates, and a color measure from the masthead. The USGS basemap can be switched off.
 
 ## Data
 

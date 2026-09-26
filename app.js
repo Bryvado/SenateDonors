@@ -419,6 +419,9 @@ function syncCandidates() {
 function syncControls() {
   $('geography').value = state.nationwide ? `nation:${state.level}` : state.selected.length ? `states:${state.level}` : 'overview';
   $('nation').setAttribute('aria-pressed', String(state.nationwide));
+  const code = !state.nationwide && state.selected.length === 1 ? state.selected[0] : '';
+  $('state-picker').value = code;
+  $('state-code').textContent = code || (!state.nationwide && state.selected.length > 1 ? String(state.selected.length) : 'ST');
 }
 function updateScope(loading) {
   const node = $('scope'), label = levels[state.level].label;
@@ -800,6 +803,8 @@ async function start() {
   addRows(csv(totals), state.totals, row => row.state + '|' + row.candidate);
   state.coverage = coverage;
   state.statesByCode = Object.fromEntries(boundaries.features.map(f => [f.properties.code, f.properties.name]));
+  for (const [code, name] of Object.entries(state.statesByCode).sort((a, b) => a[1].localeCompare(b[1])))
+    $('state-picker').add(new Option(`${name} (${code})`, code));
   file('data/state_monthly.csv').then(text => {
     const rows = csv(text);
     state.monthly = new Map(rows.map(r => [r.state + '|' + r.candidate + '|' + r.month, [Number(r.positive_cents) / 100, Number(r.net_cents) / 100, Number(r.count)]]));
@@ -846,6 +851,7 @@ $('measure').addEventListener('change', async e => {
   refresh();
 });
 $('geography').addEventListener('change', e => setGeography(e.target.value));
+$('state-picker').addEventListener('change', e => { if (e.target.value) chooseState(e.target.value, false); });
 for (const id of ['first', 'second']) $(id).addEventListener('change', e => { state[id] = e.target.value; syncCandidates(); refresh(); });
 $('add-state').addEventListener('change', e => {
   const value = e.target.value;
