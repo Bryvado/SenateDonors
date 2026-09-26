@@ -21,11 +21,11 @@ const people = (n) => n >= 1e6 ? +(n / 1e6).toFixed(1) + 'm' : n >= 1e3 ? +(n / 
 const monthLabel = (m, style = 'short') => new Date(m + '-15').toLocaleDateString('en-US', {month: style, year: 'numeric'});
 const NEUTRAL = '#ece7e0', PALE = '#f4f2ef', EMPTY = '#e6eaeb', CONUS = [[24, -125], [50, -66]];
 const levels = {
-  zcta: {label: 'ZCTAs', noun: 'ZCTA', title: 'ZIP (ZCTA)'},
+  zcta: {label: 'ZCTAs', noun: 'ZCTA', title: 'ZIP (ZCTA)', national: true, detail: true},
   county: {label: 'counties', noun: 'county', title: 'County', national: true},
   cd: {label: 'congressional districts', noun: 'district', title: 'Congressional district', national: true},
   cbsa: {label: 'metro/micro areas', noun: 'metro area', title: 'Metro/micro area', national: true},
-  cousub: {label: 'county subdivisions', noun: 'county subdivision', title: 'County subdivision'},
+  cousub: {label: 'county subdivisions', noun: 'county subdivision', title: 'County subdivision', national: true, detail: true},
   state: {label: 'states', noun: 'state', title: 'States'},
 };
 const ramp = ['#fde725', '#5ec962', '#21918c', '#3b528b', '#440154']; // viridis, light to dark
@@ -38,9 +38,9 @@ const stats = {
   count: {label: () => 'Contributions', value: (a, b) => a[2] + b[2], log: true, format: (v) => people(v)},
 };
 const state = {span: [0, 3], first: 'C00919084', second: 'C00901918', measure: 'lead', level: 'zcta',
-  selected: [], lastSelected: ['TX'], lastLocalLevel: 'zcta', focused: null, nationwide: false,
+  selected: [], lastSelected: [], lastLocalLevel: 'zcta', localPending: false, focused: null, nationwide: false,
   receipts: new Map(), totals: new Map(), areas: {}, unallocated: new Map(),
-  population: {}, monthly: null, months: [], geo: new Map(), layer: null, index: new Map(), render: 0, states: null,
+  population: {}, monthly: null, months: [], geo: new Map(), layer: null, index: new Map(), render: 0, visibleKey: null, states: null,
   coverage: null, breaks: [], fade: null, chartMode: 'monthly', timeline: false, timeIndex: 0, timeMode: 'cumulative',
   rankBy: 'total', rankDesc: true, rankStates: false,
   filter: {stat: 'total', ranges: {}, all: false, scope: ''}};
@@ -107,7 +107,8 @@ const population = (level, id) => state.population[level]?.get(id);
 
 /* The colored set: exactly one level is colored at a time. States when nothing is open (or on the
    timeline); otherwise the open areas, with every other state as plain context. */
-const statesColored = () => state.timeline || (!state.nationwide && !state.selected.length);
+const detailOverview = () => state.nationwide && levels[state.level].detail && map.getZoom() < 6;
+const statesColored = () => state.timeline || detailOverview() || (!state.nationwide && !state.selected.length);
 function areaKey(level, feature) {
   const p = feature.properties;
   return level === 'zcta' ? {store: state.receipts, key: p._state + '|' + p.zip, pop: p.zip} : {store: state.areas[level], key: p.geoid, pop: p.geoid};
@@ -274,14 +275,25 @@ async function cached(key, load) {
   return state.geo.get(key);
 }
 const tag = (features, code) => features.map(f => ({...f, properties: {...f.properties, _state: code}}));
+function visibleDetailCodes() {
+  if (!state.nationwide || !levels[state.level].detail || map.getZoom() < 6 || !state.states) return [];
+  const bounds = map.getBounds(), codes = [];
+  state.states.eachLayer(layer => {
+    if (layer.getBounds().intersects(bounds)) codes.push(layer.feature.properties.code);
+  });
+  return codes.sort();
+}
+const detailKey = () => state.nationwide && levels[state.level].detail ?
+  `${state.level}|${visibleDetailCodes().join(',')}` : null;
 async function features(level) {
   if (!state.nationwide && !state.selected.length) return [];
-  if (levels[level].national) {
+  if (levels[level].national && !levels[level].detail) {
     const all = (await cached(level, () => packed(`data/levels/geo/${level}.bin?v=1`))).features;
     return state.nationwide ? all : all.filter(f => f.properties.states.some(s => state.selected.includes(s)));
   }
   const dir = level === 'zcta' ? 'data/zctas' : 'data/levels/geo/cousub', v = level === 'zcta' ? 3 : 1;
-  const files = await Promise.all(state.selected.map(code =>
+  const codes = state.nationwide ? visibleDetailCodes() : state.selected;
+  const files = await Promise.all(codes.map(code =>
     cached(level + '|' + code, () => packed(`${dir}/${encodeURIComponent(code)}.bin?v=${v}`)).then(geo => tag(geo.features, code))));
   return files.flat();
 }
@@ -304,6 +316,7 @@ async function loadLevel(level) {
 /* Rendering the area layer for the current selection */
 async function render(fit = false) {
   const token = ++state.render, level = state.level;
+  state.visibleKey = detailKey();
   updateScope(true);
   try {
     await loadLevel(level);
@@ -375,6 +388,7 @@ function chooseState(code, add) {
   if (!state.statesByCode[code]) return;
   clearFocus();
   state.nationwide = false;
+  state.localPending = false;
   if (!add) state.selected = [code];
   else if (state.selected.includes(code)) state.selected = state.selected.filter(c => c !== code);
   else state.selected = [...state.selected, code];
@@ -385,7 +399,7 @@ function chooseState(code, add) {
 function resetView() {
   if (state.selected.length) state.lastSelected = [...state.selected];
   clearFocus();
-  state.selected = []; state.nationwide = false;
+  state.selected = []; state.nationwide = false; state.localPending = false;
   syncControls(); map.fitBounds(CONUS, fitPadding(4.5)); render();
 }
 function setNationwide(on) {
@@ -403,6 +417,7 @@ function setGeography(choice) {
   clearFocus();
   state.level = level;
   state.nationwide = scope === 'nation';
+  state.localPending = !state.nationwide && !state.selected.length && !state.lastSelected.length;
   if (!state.nationwide) {
     if (!state.selected.length) state.selected = [...state.lastSelected];
     state.lastLocalLevel = level;
@@ -417,7 +432,7 @@ function syncCandidates() {
     $(id).innerHTML = order.filter(c => c !== state[other]).map(c => `<option value="${c}"${c === state[id] ? ' selected' : ''}>${names[c]}</option>`).join('');
 }
 function syncControls() {
-  $('geography').value = state.nationwide ? `nation:${state.level}` : state.selected.length ? `states:${state.level}` : 'overview';
+  $('geography').value = state.nationwide ? `nation:${state.level}` : state.selected.length || state.localPending ? `states:${state.level}` : 'overview';
   $('nation').setAttribute('aria-pressed', String(state.nationwide));
   const code = !state.nationwide && state.selected.length === 1 ? state.selected[0] : '';
   $('state-picker').value = code;
@@ -428,7 +443,9 @@ function updateScope(loading) {
   node.replaceChildren();
   if (loading) { node.textContent = `Loading ${label}…`; return; }
   if (state.timeline) { node.textContent = `States · ${state.timeMode === 'month' ? '' : 'through '}${monthLabel(timeMonth(), 'long')}`; return; }
-  if (!state.nationwide && !state.selected.length) { node.textContent = 'U.S. states · click a state to open areas'; return; }
+  if (!state.nationwide && !state.selected.length) {
+    node.textContent = state.localPending ? `Select a state to see ${label}` : 'U.S. states · click a state to open areas'; return;
+  }
   const step = (name, action) => {
     const b = document.createElement('button');
     b.type = 'button'; b.className = 'crumb'; b.textContent = name; b.addEventListener('click', action);
@@ -436,7 +453,10 @@ function updateScope(loading) {
   };
   const separator = () => { const s = document.createElement('span'); s.className = 'crumb-separator'; s.textContent = '›'; node.append(s); };
   step('U.S. states', resetView); separator();
-  if (state.nationwide) { node.append(`Nationwide ${label}`); return; }
+  if (state.nationwide) {
+    node.append(`Nationwide ${label}${levels[state.level].detail ? detailOverview() ? ' · zoom in to see areas' : ' · showing visible states' : ''}`);
+    return;
+  }
   const selected = state.selected.length > 2 ? `${state.selected.length} states` : state.selected.map(c => state.statesByCode[c]).join(' + ');
   if (state.focused) { step(selected, returnToSelection); separator(); node.append(`${label} › ${state.focused.title}`); }
   else node.append(`${selected} · ${label}`);
@@ -575,7 +595,7 @@ function updateRank() {
   const areasShown = rankLevel !== 'state' && state.layer && state.layer.getLayers().length && !state.timeline;
   if (rankLevel !== 'state' && !areasShown) {
     $('rank-title').textContent = `Top ${levels[rankLevel].label}`;
-    $('rank-list').innerHTML = `<li class="muted">Open a state (or turn on Nationwide for counties, districts, or metro areas) to rank ${levels[rankLevel].label}.</li>`;
+    $('rank-list').innerHTML = `<li class="muted">${state.nationwide && levels[rankLevel].detail ? 'Zoom in to rank areas in the visible states.' : `Open a state or choose a nationwide view to rank ${levels[rankLevel].label}.`}</li>`;
     $('rank-note').textContent = '';
     return;
   }
@@ -595,7 +615,7 @@ function updateRank() {
     return `<li data-key="${r.key}" data-state="${r.isState ? 1 : ''}" tabindex="0"><span class="rank-n">${i + 1}</span><span class="rank-name">${r.name}</span><span class="rank-value">${measure.format(r.value)}</span>
       <span class="rank-bar" style="width:${Math.max(3, 100 * r.value / max)}%"><i style="flex:${a[0]};background:${hues[state.first]}"></i><i style="flex:${b[0]};background:${hues[state.second]}"></i></span></li>`;
   }).join('') : '<li class="muted">Nothing to rank here.</li>';
-  $('rank-note').textContent = `${rows.length.toLocaleString()} ${levels[rankLevel].label} with receipts${filtered && filterOn() ? ' inside the filter' : ''} · bar length follows the ranking, split ${names[state.first]} / ${names[state.second]}. Use Filter to set minimums (for example, dollars behind a share).`;
+  $('rank-note').textContent = `${rows.length.toLocaleString()} ${levels[rankLevel].label} with receipts${state.nationwide && levels[rankLevel].detail ? ' in the visible states' : ''}${filtered && filterOn() ? ' inside the filter' : ''} · bar length follows the ranking, split ${names[state.first]} / ${names[state.second]}. Use Filter to set minimums (for example, dollars behind a share).`;
 }
 function highlight(key, on) {
   const polygon = state.index.get(key);
@@ -827,9 +847,8 @@ async function start() {
   if (window.innerWidth <= 850) { $('side').classList.add('collapsed'); $('side-toggle').setAttribute('aria-expanded', 'false'); }
   for (const id of PANELS) floating($(id));
   syncCandidates();
-  state.selected = ['TX'];
   syncControls();
-  await render(true);
+  await render();
 }
 
 function periodInput(which) {
@@ -875,7 +894,7 @@ $('rank-level').addEventListener('change', e => {
   const level = e.target.value;
   state.rankStates = level === 'state';
   if (state.rankStates) return updateRank();
-  // Ranking counties, districts or metro areas with nothing open shows them nationwide.
+  // Ranking an area level with nothing open shows it nationwide.
   if (!state.selected.length && !state.nationwide && levels[level].national) { state.level = level; setNationwide(true); }
   else setLevel(level);
 });
@@ -903,6 +922,7 @@ $('home').addEventListener('click', resetView);
 $('nation').addEventListener('click', () => setNationwide(!state.nationwide));
 $('zoom-in').addEventListener('click', () => map.zoomIn());
 $('zoom-out').addEventListener('click', () => map.zoomOut());
+map.on('moveend', () => { if (detailKey() !== state.visibleKey) render(); });
 $('tiles').addEventListener('click', () => {
   const active = map.hasLayer(tiles);
   active ? map.removeLayer(tiles) : tiles.addTo(map);
