@@ -403,6 +403,7 @@ function resetView() {
   syncControls(); map.fitBounds(CONUS, fitPadding(4.5)); render();
 }
 function setNationwide(on) {
+  if (!on && !state.lastSelected.length) return resetView();
   setGeography(on ? `nation:${levels[state.level].national ? state.level : 'county'}` : `states:${state.lastLocalLevel}`);
 }
 function setLevel(level) {
@@ -432,11 +433,37 @@ function syncCandidates() {
     $(id).innerHTML = order.filter(c => c !== state[other]).map(c => `<option value="${c}"${c === state[id] ? ' selected' : ''}>${names[c]}</option>`).join('');
 }
 function syncControls() {
-  $('geography').value = state.nationwide ? `nation:${state.level}` : state.selected.length || state.localPending ? `states:${state.level}` : 'overview';
+  $('geography').value = state.nationwide || state.selected.length || state.localPending ? state.level : 'overview';
   $('nation').setAttribute('aria-pressed', String(state.nationwide));
   const code = !state.nationwide && state.selected.length === 1 ? state.selected[0] : '';
-  $('state-picker').value = code;
   $('state-code').textContent = code || (!state.nationwide && state.selected.length > 1 ? String(state.selected.length) : 'ST');
+}
+function openStateMenu() {
+  $('state-menu').hidden = false;
+  $('state-picker').setAttribute('aria-expanded', 'true');
+  $('state-search').value = '';
+  $('state-options').querySelectorAll('label').forEach(label => {
+    label.hidden = false;
+    label.querySelector('input').checked = state.selected.includes(label.querySelector('input').value);
+  });
+  $('state-search').focus();
+}
+function closeStateMenu() {
+  $('state-menu').hidden = true;
+  $('state-picker').setAttribute('aria-expanded', 'false');
+}
+function applyStateSelection() {
+  const codes = [...$('state-options').querySelectorAll('input:checked')].map(input => input.value);
+  closeStateMenu();
+  if (!codes.length) { state.selected = []; state.lastSelected = []; return resetView(); }
+  clearFocus();
+  state.selected = codes;
+  state.lastSelected = [...codes];
+  state.lastLocalLevel = state.level;
+  state.nationwide = false;
+  state.localPending = false;
+  syncControls();
+  render(true);
 }
 function updateScope(loading) {
   const node = $('scope'), label = levels[state.level].label;
@@ -823,8 +850,12 @@ async function start() {
   addRows(csv(totals), state.totals, row => row.state + '|' + row.candidate);
   state.coverage = coverage;
   state.statesByCode = Object.fromEntries(boundaries.features.map(f => [f.properties.code, f.properties.name]));
-  for (const [code, name] of Object.entries(state.statesByCode).sort((a, b) => a[1].localeCompare(b[1])))
-    $('state-picker').add(new Option(`${name} (${code})`, code));
+  for (const [code, name] of Object.entries(state.statesByCode).sort((a, b) => a[1].localeCompare(b[1]))) {
+    const label = document.createElement('label'), input = document.createElement('input');
+    input.type = 'checkbox'; input.value = code;
+    label.append(input, `${name} (${code})`);
+    $('state-options').append(label);
+  }
   file('data/state_monthly.csv').then(text => {
     const rows = csv(text);
     state.monthly = new Map(rows.map(r => [r.state + '|' + r.candidate + '|' + r.month, [Number(r.positive_cents) / 100, Number(r.net_cents) / 100, Number(r.count)]]));
@@ -869,8 +900,22 @@ $('measure').addEventListener('change', async e => {
   try { await loadLevel(state.level); } catch (error) { showError(error); }
   refresh();
 });
-$('geography').addEventListener('change', e => setGeography(e.target.value));
-$('state-picker').addEventListener('change', e => { if (e.target.value) chooseState(e.target.value, false); });
+$('geography').addEventListener('change', e => {
+  if (e.target.value === 'choose') { syncControls(); openStateMenu(); }
+  else if (e.target.value === 'overview') resetView();
+  else setLevel(e.target.value);
+});
+$('state-picker').addEventListener('click', () => $('state-menu').hidden ? openStateMenu() : closeStateMenu());
+$('state-close').addEventListener('click', closeStateMenu);
+$('state-apply').addEventListener('click', applyStateSelection);
+$('state-clear').addEventListener('click', () => $('state-options').querySelectorAll('input').forEach(input => { input.checked = false; }));
+$('state-search').addEventListener('input', e => {
+  const query = e.target.value.trim().toLowerCase();
+  $('state-options').querySelectorAll('label').forEach(label => { label.hidden = !label.textContent.toLowerCase().includes(query); });
+});
+document.addEventListener('pointerdown', e => {
+  if (!$('state-menu').hidden && !e.target.closest('#state-menu, #state-picker, #geography')) closeStateMenu();
+});
 for (const id of ['first', 'second']) $(id).addEventListener('change', e => { state[id] = e.target.value; syncCandidates(); refresh(); });
 $('add-state').addEventListener('change', e => {
   const value = e.target.value;
@@ -932,7 +977,9 @@ function about(open) { $('about').hidden = !open; $('about-toggle').setAttribute
 $('about-toggle').addEventListener('click', () => about($('about').hidden));
 $('about-close').addEventListener('click', () => about(false));
 document.addEventListener('keydown', e => {
-  if (e.key !== 'Escape' || e.target.closest('select, input')) return;
+  if (e.key !== 'Escape') return;
+  if (!$('state-menu').hidden) return closeStateMenu();
+  if (e.target.closest('select, input')) return;
   if (!$('about').hidden) return about(false);
   if (state.focused) return returnToSelection();
   if (state.selected.length || state.nationwide) resetView();
