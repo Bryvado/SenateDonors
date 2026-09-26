@@ -107,8 +107,9 @@ const population = (level, id) => state.population[level]?.get(id);
 
 /* The colored set: exactly one level is colored at a time. States when nothing is open (or on the
    timeline); otherwise the open areas, with every other state as plain context. */
-const detailOverview = () => state.nationwide && levels[state.level].detail && map.getZoom() < 6;
-const statesColored = () => state.timeline || detailOverview() || (!state.nationwide && !state.selected.length);
+// Nationwide ZCTAs and county subdivisions draw at every zoom: visible states' files stream in nearest-first.
+const detailNation = () => state.nationwide && levels[state.level].detail;
+const statesColored = () => state.timeline || (!state.nationwide && !state.selected.length);
 function areaKey(level, feature) {
   const p = feature.properties;
   return level === 'zcta' ? {store: state.receipts, key: p._state + '|' + p.zip, pop: p.zip} : {store: state.areas[level], key: p.geoid, pop: p.geoid};
@@ -276,27 +277,31 @@ async function cached(key, load) {
 }
 const tag = (features, code) => features.map(f => ({...f, properties: {...f.properties, _state: code}}));
 function visibleDetailCodes() {
-  if (!state.nationwide || !levels[state.level].detail || map.getZoom() < 6 || !state.states) return [];
-  const bounds = map.getBounds(), codes = [];
+  if (!detailNation() || !state.states) return [];
+  const bounds = map.getBounds(), center = map.getCenter(), codes = [];
   state.states.eachLayer(layer => {
-    if (layer.getBounds().intersects(bounds)) codes.push(layer.feature.properties.code);
+    const box = layer.getBounds();
+    if (box.intersects(bounds)) codes.push([layer.feature.properties.code, center.distanceTo(box.getCenter())]);
   });
-  return codes.sort();
+  return codes.sort((a, b) => a[1] - b[1]).map(c => c[0]);
 }
 const detailKey = () => state.nationwide && levels[state.level].detail ?
-  `${state.level}|${visibleDetailCodes().join(',')}` : null;
+  `${state.level}|${visibleDetailCodes().sort().join(',')}` : null;
 async function features(level) {
   if (!state.nationwide && !state.selected.length) return [];
   if (levels[level].national && !levels[level].detail) {
     const all = (await cached(level, () => packed(`data/levels/geo/${level}.bin?v=1`))).features;
     return state.nationwide ? all : all.filter(f => f.properties.states.some(s => state.selected.includes(s)));
   }
-  const dir = level === 'zcta' ? 'data/zctas' : 'data/levels/geo/cousub', v = level === 'zcta' ? 3 : 1;
-  const codes = state.nationwide ? visibleDetailCodes() : state.selected;
-  const files = await Promise.all(codes.map(code =>
-    cached(level + '|' + code, () => packed(`${dir}/${encodeURIComponent(code)}.bin?v=${v}`)).then(geo => tag(geo.features, code))));
+  const files = await Promise.all(state.selected.map(code => stateFile(level, code)));
   return files.flat();
 }
+function stateFile(level, code) {
+  const dir = level === 'zcta' ? 'data/zctas' : 'data/levels/geo/cousub', v = level === 'zcta' ? 3 : 1;
+  return cached(level + '|' + code, () => packed(`${dir}/${encodeURIComponent(code)}.bin?v=${v}`)).then(geo => tag(geo.features, code));
+}
+// Tens of thousands of shapes: canvas keeps nationwide ZCTAs and subdivisions responsive.
+const detailCanvas = L.canvas({pane: 'zctaPane', padding: .4});
 const loadPopulation = (name) => state.population[name] ? null :
   file(`data/population/${name}.csv`).then(text => { state.population[name] = new Map(csv(text).map(r => [r.geoid, Number(r.population)])); });
 async function loadLevel(level) {
@@ -320,12 +325,12 @@ async function render(fit = false) {
   updateScope(true);
   try {
     await loadLevel(level);
-    const list = await features(level);
+    const streaming = detailNation(), list = streaming ? [] : await features(level);
     if (token !== state.render) return;
     if (state.layer) map.removeLayer(state.layer);
     state.index = new Map();
     state.layer = L.geoJSON({type: 'FeatureCollection', features: list}, {
-      pane: 'zctaPane', smoothFactor: .5, style: feature => areaStyle(level, feature),
+      pane: 'zctaPane', smoothFactor: .5, style: feature => areaStyle(level, feature), ...(streaming ? {renderer: detailCanvas} : {}),
       onEachFeature: (feature, polygon) => {
         const p = feature.properties;
         state.index.set(areaKey(level, feature).key, polygon);
@@ -335,8 +340,11 @@ async function render(fit = false) {
         }, {sticky: true, direction: 'top'});
         // A single click focuses an area (or opens its state in nationwide view).
         let single;
+        // Canvas shapes stay hit-testable when hidden, so empty areas ignore hover and clicks here.
+        polygon.on('tooltipopen', () => { if (!hasReceipts(areaAmounts(level, feature))) polygon.closeTooltip(); });
         polygon.on('click', e => {
           L.DomEvent.stopPropagation(e);
+          if (!hasReceipts(areaAmounts(level, feature))) return;
           clearTimeout(single);
           const add = modifier(e);
           single = setTimeout(() => {
@@ -353,9 +361,19 @@ async function render(fit = false) {
     state.layer.level = level;
     $('error').hidden = true;
     if (fit && list.length) map.fitBounds(state.layer.getBounds(), fitPadding(8));
+    if (streaming) {
+      const layer = state.layer;
+      await Promise.all(visibleDetailCodes().map(code => stateFile(level, code).then(found => {
+        if (token !== state.render || layer !== state.layer) return;
+        layer.addData(found);
+        scheduleRefresh();
+      })));
+    }
   } catch (error) { showError(error); }
   if (token === state.render) { updateScope(); refresh(); }
 }
+let refreshFrame = 0;
+function scheduleRefresh() { cancelAnimationFrame(refreshFrame); refreshFrame = requestAnimationFrame(() => { updateScope(); refresh(); }); }
 // Keep fitted areas clear of the masthead and of the totals panel when it sits on the right.
 function fitPadding(maxZoom) {
   const side = $('side'), box = side.getBoundingClientRect();
@@ -481,7 +499,7 @@ function updateScope(loading) {
   const separator = () => { const s = document.createElement('span'); s.className = 'crumb-separator'; s.textContent = '›'; node.append(s); };
   step('U.S. states', resetView); separator();
   if (state.nationwide) {
-    node.append(`Nationwide ${label}${levels[state.level].detail ? detailOverview() ? ' · zoom in to see areas' : ' · showing visible states' : ''}`);
+    node.append(`Nationwide ${label}${levels[state.level].detail ? ' · visible states' : ''}`);
     return;
   }
   const selected = state.selected.length > 2 ? `${state.selected.length} states` : state.selected.map(c => state.statesByCode[c]).join(' + ');
@@ -622,7 +640,7 @@ function updateRank() {
   const areasShown = rankLevel !== 'state' && state.layer && state.layer.getLayers().length && !state.timeline;
   if (rankLevel !== 'state' && !areasShown) {
     $('rank-title').textContent = `Top ${levels[rankLevel].label}`;
-    $('rank-list').innerHTML = `<li class="muted">${state.nationwide && levels[rankLevel].detail ? 'Zoom in to rank areas in the visible states.' : `Open a state or choose a nationwide view to rank ${levels[rankLevel].label}.`}</li>`;
+    $('rank-list').innerHTML = `<li class="muted">${state.nationwide && levels[rankLevel].detail ? 'Loading areas for the visible states…' : `Open a state or choose a nationwide view to rank ${levels[rankLevel].label}.`}</li>`;
     $('rank-note').textContent = '';
     return;
   }
