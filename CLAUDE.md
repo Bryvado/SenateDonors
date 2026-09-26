@@ -6,7 +6,7 @@ Snapshot documented from commit `6a72736` (single commit, "Add files via upload"
 
 ## Working copy (repo is ~94 MB, almost all geometry)
 
-Most of the weight is `data/zctas/*.bin` (~85 MB) and `data/levels/geo/cousub/*.bin` (~20 MB). For code work, use a sparse, blobless clone that keeps Texas geometry only:
+Most of the weight is `data/zctas/*.bin` and `data/levels/geo/cousub/*.bin` (git history keeps the older, larger GeoJSON versions too). For code work, use a sparse, blobless clone that keeps Texas geometry only:
 
 ```
 git clone --filter=blob:none --sparse https://github.com/Bryvado/SenateDonors.git
@@ -24,13 +24,15 @@ Local preview: `python3 -m http.server 8000` from the repo root (not `file://`; 
 index.html            UI shell: masthead controls (two-handle Period slider, compare/with candidates, show states|nationwide, areas level, color by), map buttons (⌂ U.S. overview, US nationwide, zoom, basemap), panel launcher (`.tools`), five floating panels (`#side` Totals, `#rank` Top places, `#donors` Donor map, `#filter` Filter, `#timeline` Timeline), legend (bottom left), footer, About panel, hidden SVG `<defs id="patterns">` filled at runtime
 app.js                All client logic (vanilla JS + Leaflet global `L`); side-panel chart is hand-built SVG
 style.css             All styling; responsive breakpoints at 850px and 540px
-vendor/               Leaflet 1.9.4 (js, css, license), vendored, no CDN
+vendor/               Leaflet 1.9.4 (js, css, license) and topojson-client 3.1.0 (min.js, ISC license), vendored, no CDN
 scripts/
   update_data.py      FEC refresh + reconciliation + level allocation; writes all tracked data outputs. `--levels-only` regenerates data/levels/*.csv from the current receipts.csv
   seed.py             One-time rebuild of aggregates from an external audited bundle; imports publish() from update_data.py
   convert_crosswalks.py  Stdlib xlsx -> CSV converter for the HUD crosswalk workbooks
   build_population.py Stdlib; writes data/population/*.csv from the ACS 5-year summary-file table B01003 (no API key)
-  build_geometry.py   Rebuilds states.json, zctas/*.bin and levels/geo/* from Census archives (geopandas); every input flag is optional
+  build_geometry.py   Rebuilds states.json, zctas/*.bin and levels/geo/* from Census archives (geopandas, topojson); every input flag is optional. See "Boundary files" below
+  build_manifest.py   Stdlib; writes data/manifest.json (content hash per boundary file). `--check` exits 1 when stale
+  audit_site.py       Playwright audit (not stdlib): `serve` (Pages-like local server: gzip, max-age, deploy-time ETags, `/__deploy` to simulate a redeploy), `visit` (first-visitor walkthrough, desktop + 390x844, unthrottled + Fast 4G/4x CPU, median of runs), `repeat`, `nocache`, `geometry`, `headers`, `values` (dump of every computed value to diff to the cent)
 data/
   receipts.csv        state,zip,candidate,phase,positive_cents,net_cents,count   (~24.6k rows, CRLF)
   state_totals.csv    state,candidate,phase,positive_cents,net_cents,count       (~410 rows, includes unmappable ZIPs)
@@ -38,13 +40,14 @@ data/
   population/{state,zcta,county,cd,cbsa,cousub}.csv   geoid,population (ACS 2020-2024). Static; not touched by the refresh
   coverage.json       retrieved date, coverage_start/end, filing_count, source strings
   filings.json        {committees: {id: [file_numbers]}, reports: [...]}; the committees map is the change-detection signature
-  states.json         Simplified state polygons, properties {code, name}
-  zctas/XX.bin        Gzipped GeoJSON FeatureCollection per state/territory, properties {zip}
+  states.json         Simplified state polygons, plain GeoJSON (4 decimals), properties {code, name}
+  zctas/XX.bin        Gzipped TopoJSON per state/territory, one object `areas`, properties {zip}
   crosswalks/         HUD USPS ZIP crosswalks (06/2026) as CSV: zip,geoid,state,res_ratio,tot_ratio. ZIP-COUNTY, ZIP-CD, ZIP-CBSA, ZIP-COUNTY-SUB are used; ZIP-CBSA-DIVISION is converted but unused
   levels/{county,cd,cbsa,cousub}.csv   geoid,candidate,phase,positive_cents,net_cents,count (count has 2 decimals, estimated)
   levels/unallocated.csv               level,state,candidate,phase,... dollars in placeholder geoids, by reported state
-  levels/geo/{county,cd,cbsa}.bin      Gzipped GeoJSON, national, properties {geoid, name, states:[USPS codes touched]}
-  levels/geo/cousub/XX.bin             Gzipped GeoJSON per state, properties {geoid, name}
+  levels/geo/{county,cd,cbsa}.bin      Gzipped TopoJSON, national, properties {geoid, name, states:[USPS codes touched]}
+  levels/geo/cousub/XX.bin             Gzipped TopoJSON per state, properties {geoid, name}
+  manifest.json       {files: {path: 12-hex git blob id}} for states.json and every .bin; written by build_manifest.py and by the workflow
 .github/workflows/site.yml   Refresh + Pages deploy
 ```
 
@@ -72,11 +75,20 @@ data/
 - County: `cb_2024_us_county_500k` (has Connecticut planning regions, matching HUD). CBSA: `cb_2024_us_cbsa_500k`. County subdivision: `cb_2022_us_cousub_500k`; 2022 matches the HUD geoids best (2024 lacks ~1,200 Arkansas geoids HUD still uses).
 - Congressional districts: **119th Congress** (`cb_2024_us_cd119_500k`). Checked 2026-09: for Texas, ZCTA representative points fell in the crosswalk's highest-weight district 89.7% of the time for the 119th file vs 67.5% for PLANC2333 (2025 mid-decade plan); for single-district ZIPs 98.9% vs 76.6%. Census at-large/delegate code `98` is rewritten to HUD's `00`. Recorded in `coverage.json` as `cd_vintage` and stated in the About panel. Recheck when HUD moves to a newer map.
 
+### Boundary files (`build_geometry.py`)
+
+- Sized for maxZoom 12 (~33 m/pixel in Texas). Each layer is simplified as a coverage with `shapely.coverage_simplify` (Visvalingam-Whyatt; neighbours keep one shared edge, so no slivers), in an equal-area/UTM projection per region (`region_crs`). Tolerances in meters (`TOLERANCE`): states 2500, ZCTA 60, county/cd/cbsa 200, cousub 100. ZCTAs are simplified nationally before being split into state files, so edges across state lines match.
+- `.bin` = gzip of TopoJSON with one GeometryCollection `areas`, coordinates snapped to a 1e-4 degree grid (~11 m; `QUANTUM`) and delta-encoded. 4 vs 5 decimals was tested: 5 costs ~25% more with no visible change at z12. Decoded in the browser by `topojson.feature()`; `packed()` still accepts gzipped GeoJSON.
+- Checked 2026-09 by screenshots at z6/z9/z12 over Houston, Dallas-Fort Worth and Manhattan against the previous files (Manhattan z12 at ZCTA 80 m started dropping piers; 60 m did not). ZCTA-to-file assignment is unchanged (representative point in the unsimplified 500k states).
+- After any rebuild run `python3 scripts/build_manifest.py` (the workflow also runs it before deploying).
+
 Phases (`phase_for`): `pre_primary` through 2026-03-03, `between_primary_runoff` through 2026-05-26, `post_runoff` after. Receipts before 2025-01-01 are dropped.
 
 ## Front end (`app.js`)
 
 Global `state` object: UI selections (`span` = [start, end) phase indexes from the masthead's two-handle Period slider, default all three; any contiguous stretch such as "Since Mar 4", `first`, `second`, `measure` lead|volume|capita, `level`, `selected` array of USPS codes (starts empty: the page opens on a U.S. state-level view, no Texas default), `nationwide` bool, `chartMode` monthly|cumulative, `timeline`/`timeIndex`/`timeMode`, `rankBy`) plus Maps: `receipts` keyed `STATE|ZIP|COMMITTEE`, `totals` keyed `STATE|COMMITTEE`, `areas[level]` keyed `GEOID|COMMITTEE`, `unallocated` keyed `LEVEL|STATE|COMMITTEE`, each value `{phase: [dollars, net_dollars, count]}` (cents / 100 on load); `population[level]` Map geoid -> people (loaded for Per 100 residents or when Top places is open); `monthly` Map `STATE|COMMITTEE|YYYY-MM` -> `[dollars, net, count]`, `months` sorted list. `values()` sums the phases in `span` at read time.
+
+Boundary loading and caching: `start()` fetches `data/manifest.json` (`cache: 'no-cache'`), then states.json, `state_totals.csv` and `coverage.json`; the U.S. overview needs nothing else. `receipts.csv` loads the first time a ZIP layer is drawn (`loadLevel('zcta')`). Every boundary file goes through `geoResponse(path)`: requested as `path?h=<hash>`, looked up in Cache Storage (`senatedonors-geo`) first and stored there after a network fetch, so a file is only downloaded again when its hash changes (Pages gives every file a new ETag on each deploy, and its max-age is 10 minutes). `evictGeo()` deletes cached URLs whose hash is no longer in the manifest, at idle after the first render. With Cache Storage unavailable, or a path missing from the manifest, files come from the network as before. CSVs and coverage.json are never put in Cache Storage. Hovering a state for 200 ms on a fine pointer warms the cache for its ZCTA/cousub file (`prefetchGeo`, skipped with Save-Data). Parsed files live in `state.geo` (LRU): after each render, files not on screen beyond the `GEO_KEEP` (6) most recent are dropped, since parsed geometry is large.
 
 Selection model: one area layer (`state.layer`, with `state.index` key -> polygon) rebuilt by `render()` whenever selection, nationwide or level changes (a render token drops stale loads). With nothing selected the map is states only. Plain click on a state (or on an area while nationwide) selects only that state; a single click on an area zooms to it and a quick double click on any area resets to the U.S. view (250 ms timer); Shift/Ctrl/Cmd-click toggles it; × on a card removes it (removing the last returns to the U.S. view); ⌂ clears everything. Nationwide ZCTA/cousub (`detailNation()`) streams the per-state files for every state in view at any zoom, nearest the center first, into a canvas-rendered layer (`detailCanvas`), reloading on `moveend` when the visible set changes; nationwide shows the whole country for county/cd/cbsa (`levels[x].national`); turning it on from ZIP or cousub switches to county. Per-state files (ZCTA, cousub) are tagged with `_state` so ZCTA receipts keep their `STATE|ZIP` key. Multi-state CBSAs are drawn once.
 
@@ -95,9 +107,9 @@ The CSV parser is a plain comma split. That works only because no field is quote
 
 - Candidate committee IDs and names: `CANDIDATES` in `update_data.py`, `names`/`hues`/`order` in `app.js`, and both `<select>` lists in `index.html`. Adding a candidate touches all three plus the legend logic, which assumes exactly two compared.
 - Phase keys and date cutoffs: `PHASES`/`phase_for` in Python; `phases`, `phaseMonths`, `phaseEdges`/`periodLabel()` in `app.js`; the Period slider tick labels in `index.html` ("Through Mar 3", "Mar 4 – May 26", "Since May 27").
-- Cache-busting query strings: `app.js?v=22` and `style.css?v=22` in `index.html`, `states.json?v=2`, `zctas/*.bin?v=3` and `levels/geo/*.bin?v=1` in `app.js`. Bump when those files change.
-- The Pages artifact is built by copying `index.html style.css app.js data vendor` only. New top-level assets must be added to the "Prepare static site" step. (This CLAUDE.md is therefore not published.)
-- The workflow's commit step `git add`s the four data outputs plus `data/state_monthly.csv` and `data/levels/*.csv`. A new generated file needs to be added there too.
+- Cache busting: `app.js?v=23` and `style.css?v=23` in `index.html`; bump when those files change. Boundary files have no `?v=`: they are versioned by `data/manifest.json`, which must be regenerated (`scripts/build_manifest.py`) whenever states.json or a `.bin` changes. The workflow regenerates it on every run, so a stale committed manifest only affects local previews.
+- The Pages artifact is built by copying `index.html style.css app.js data vendor` only (the vendored topojson-client is under vendor/). New top-level assets must be added to the "Prepare static site" step. (This CLAUDE.md is therefore not published.)
+- The workflow runs `build_manifest.py` and its commit step `git add`s the four data outputs plus `data/state_monthly.csv`, `data/levels/*.csv` and `data/manifest.json`. A new generated file needs to be added there too.
 - Level keys (`county`, `cd`, `cbsa`, `cousub`): `LEVELS` in `update_data.py`, `levels` in `app.js`, the `#level` select, and the file names in `build_geometry.py`.
 
 ## Geography caveats (relevant to correctness work)
@@ -113,6 +125,6 @@ Triggers: push to `main`, cron `17 */6 * * *`, manual dispatch. On non-push runs
 ## Conventions
 
 - No build step, no npm, no framework. Keep it that way unless asked.
-- Python scripts use only the standard library, except `build_geometry.py` (geopandas, pyogrio, shapely).
+- Python scripts use only the standard library, except `build_geometry.py` (geopandas, pyogrio, shapely >= 2.1, topojson) and `audit_site.py` (playwright; uses the preinstalled Chromium under /opt/pw-browsers or `$CHROMIUM`).
 - Never commit individual donor names, addresses, or row-level FEC records; only aggregates.
 - Money stays in integer cents in data files.
