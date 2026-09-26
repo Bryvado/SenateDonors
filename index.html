@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#eff1f2">
+  <meta name="theme-color" content="#0f151a">
   <title>Senate donors · FEC ZIP map</title>
   <link rel="stylesheet" href="vendor/leaflet.css">
-  <link rel="stylesheet" href="style.css?v=20">
+  <link rel="stylesheet" href="style.css?v=21">
   <script defer src="vendor/leaflet.js"></script>
-  <script defer src="app.js?v=20"></script>
+  <script defer src="app.js?v=21"></script>
 </head>
 <body>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -63,7 +63,7 @@
     <button id="zoom-out" title="Zoom out" aria-label="Zoom out">−</button>
     <button id="tiles" title="Toggle USGS basemap" aria-label="Toggle USGS basemap" aria-pressed="true">▧</button>
   </div>
-  <nav class="tools panel" aria-label="Panels">
+  <nav class="tools panel" id="tools" aria-label="Panels">
     <button data-panel="side" aria-pressed="true" title="Totals and monthly receipts"><span aria-hidden="true">▤</span>Totals</button>
     <button data-panel="rank" aria-pressed="false" title="Top places in view"><span aria-hidden="true">≡</span>Top places</button>
     <button data-panel="donors" aria-pressed="false" title="Where each candidate's money comes from"><span aria-hidden="true">◔</span>Donor map</button>
@@ -130,5 +130,6 @@
     <p class="small">No individual names or addresses are published here. Filing updates are checked every six hours; the display changes only after the FEC files a new or amended report and the totals pass reconciliation.</p>
   </aside>
   <div id="error" class="error panel" role="alert" hidden></div>
+  <div id="progress" class="progress panel" role="progressbar" aria-label="Loading boundaries" hidden><span class="progress-bar"><i id="progress-fill"></i></span><span id="progress-count"></span></div>
 </body>
 </html>

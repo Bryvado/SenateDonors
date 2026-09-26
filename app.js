@@ -19,7 +19,8 @@ const money = (n) => '$' + Math.round(n).toLocaleString('en-US');
 const short = (n) => n >= 1e6 ? '$' + +(n / 1e6).toFixed(1) + 'm' : n >= 1e3 ? '$' + +(n / 1e3).toFixed(1) + 'k' : '$' + Math.round(n);
 const people = (n) => n >= 1e6 ? +(n / 1e6).toFixed(1) + 'm' : n >= 1e3 ? +(n / 1e3).toFixed(1) + 'k' : String(Math.round(n));
 const monthLabel = (m, style = 'short') => new Date(m + '-15').toLocaleDateString('en-US', {month: style, year: 'numeric'});
-const NEUTRAL = '#ece7e0', PALE = '#f4f2ef', EMPTY = '#e6eaeb', CONUS = [[24, -125], [50, -66]];
+// Dark theme: weak values fade toward the map background; no-receipt places are grey.
+const NEUTRAL = '#5d656c', PALE = '#1b2329', EMPTY = '#3a4248', INK = '#f2f6f8', LINE = '#0c1115', CONUS = [[24, -125], [50, -66]];
 const levels = {
   zcta: {label: 'ZCTAs', noun: 'ZCTA', title: 'ZIP (ZCTA)', national: true, detail: true},
   county: {label: 'counties', noun: 'county', title: 'County', national: true},
@@ -42,7 +43,7 @@ const state = {span: [0, 3], first: 'C00919084', second: 'C00901918', measure: '
   receipts: new Map(), totals: new Map(), areas: {}, unallocated: new Map(),
   population: {}, monthly: null, months: [], geo: new Map(), layer: null, index: new Map(), render: 0, visibleKey: null, states: null,
   coverage: null, breaks: [], fade: null, chartMode: 'monthly', timeline: false, timeIndex: 0, timeMode: 'cumulative',
-  rankBy: 'total', rankDesc: true, rankStates: false,
+  rankBy: 'total', rankDesc: true, rankStates: false, showEmpty: true,
   filter: {stat: 'total', ranges: {}, all: false, scope: ''}};
 const map = L.map('map', {zoomControl: false, doubleClickZoom: false, minZoom: 3, maxZoom: 12, preferCanvas: false,
   worldCopyJump: false, zoomSnap: .25, maxBounds: [[-10, -185], [73, -40]], maxBoundsViscosity: .6});
@@ -188,12 +189,14 @@ function paint(amounts, pop) {
 }
 function stateStyle(feature) {
   const code = feature.properties.code, chosen = !state.timeline && !state.nationwide && state.selected.includes(code);
-  const base = {pane: 'statePane', color: chosen ? '#10212b' : '#7d8e95', weight: chosen ? 2.4 : .8, opacity: .9};
-  if (!statesColored()) return {...base, fillColor: '#ffffff', fillOpacity: chosen || state.nationwide ? 0 : .6};
-  return {...base, ...paint(stateAmounts(code), population('state', code))};
+  const base = {pane: 'statePane', color: chosen ? INK : '#56656e', weight: chosen ? 2.4 : .7, opacity: .9};
+  if (!statesColored()) return {...base, fillColor: '#10171c', fillOpacity: chosen || state.nationwide ? 0 : .55};
+  const amounts = stateAmounts(code);
+  if (!hasReceipts(amounts) && !state.showEmpty) return {...base, fillOpacity: 0};
+  return {...base, ...paint(amounts, population('state', code))};
 }
-// Areas where neither compared candidate has receipts in the selected period are not drawn at all
-// (no outline, fill, or hover); they reappear as soon as the period, pair, or data gives them receipts.
+// Places where neither compared candidate has receipts in the span are grey, or not drawn when the
+// legend's No receipts switch is off; either way they ignore hover and clicks.
 const hasReceipts = (amounts) => amounts[0][0] + amounts[1][0] > 0;
 function areaAmounts(level, feature) {
   const {store, key} = areaKey(level, feature);
@@ -201,9 +204,9 @@ function areaAmounts(level, feature) {
 }
 function areaStyle(level, feature) {
   const {pop} = areaKey(level, feature), amounts = areaAmounts(level, feature);
-  if (!hasReceipts(amounts)) return {pane: 'zctaPane', stroke: false, fill: false};
+  if (!hasReceipts(amounts)) return state.showEmpty ? {pane: 'zctaPane', stroke: true, fill: true, color: LINE, weight: .3, opacity: .6, fillColor: EMPTY, fillOpacity: .5} : {pane: 'zctaPane', stroke: false, fill: false};
   const focused = state.focused?.level === level && state.focused.key === areaKey(level, feature).key;
-  return {pane: 'zctaPane', stroke: true, fill: true, color: focused ? '#10212b' : '#56696f',
+  return {pane: 'zctaPane', stroke: true, fill: true, color: focused ? INK : LINE,
     weight: focused ? 2.2 : level === 'zcta' || level === 'cousub' ? .35 : .6, opacity: focused ? 1 : .5,
     ...paint(amounts, population(level, pop))};
 }
@@ -287,13 +290,14 @@ function visibleDetailCodes() {
 }
 const detailKey = () => state.nationwide && levels[state.level].detail ?
   `${state.level}|${visibleDetailCodes().sort().join(',')}` : null;
-async function features(level) {
+async function features(level, token) {
   if (!state.nationwide && !state.selected.length) return [];
   if (levels[level].national && !levels[level].detail) {
     const all = (await cached(level, () => packed(`data/levels/geo/${level}.bin?v=1`))).features;
+    progressTick(token);
     return state.nationwide ? all : all.filter(f => f.properties.states.some(s => state.selected.includes(s)));
   }
-  const files = await Promise.all(state.selected.map(code => stateFile(level, code)));
+  const files = await Promise.all(state.selected.map(code => stateFile(level, code).then(f => { progressTick(token); return f; })));
   return files.flat();
 }
 function stateFile(level, code) {
@@ -318,14 +322,38 @@ async function loadLevel(level) {
   await Promise.all(jobs);
 }
 
+/* Loading bar: one step per boundary file (a state's file, or one national file). */
+const progress = {token: 0, done: 0, total: 0, timer: 0};
+function progressStart(token, total) {
+  Object.assign(progress, {token, done: 0, total: Math.max(1, total)});
+  clearTimeout(progress.timer);
+  progress.timer = setTimeout(() => { if (progress.token === token && progress.done < progress.total) $('progress').hidden = false; }, 150);
+  progressDraw();
+}
+function progressTick(token) {
+  if (token !== progress.token) return;
+  progress.done += 1;
+  progressDraw();
+  if (progress.done >= progress.total) { clearTimeout(progress.timer); setTimeout(() => { if (progress.token === token) $('progress').hidden = true; }, 250); }
+}
+function progressDraw() {
+  $('progress-fill').style.width = (100 * progress.done / progress.total) + '%';
+  $('progress-count').textContent = `${progress.done}/${progress.total}`;
+}
+
 /* Rendering the area layer for the current selection */
 async function render(fit = false) {
   const token = ++state.render, level = state.level;
   state.visibleKey = detailKey();
   updateScope(true);
   try {
+    const streaming = detailNation();
+    const files = !streaming && !state.selected.length && !state.nationwide ? 0 : streaming ? visibleDetailCodes().length
+      : levels[level].national && !levels[level].detail ? 1 : state.selected.length;
+    progressStart(token, files + 1);
     await loadLevel(level);
-    const streaming = detailNation(), list = streaming ? [] : await features(level);
+    progressTick(token);
+    const list = streaming ? [] : await features(level, token);
     if (token !== state.render) return;
     if (state.layer) map.removeLayer(state.layer);
     state.index = new Map();
@@ -353,7 +381,7 @@ async function render(fit = false) {
           }, 250);
         });
         polygon.on('dblclick', e => { L.DomEvent.stopPropagation(e); clearTimeout(single); resetView(); });
-        polygon.on('mouseover', () => { if (hasReceipts(areaAmounts(level, feature))) polygon.setStyle({weight: 1.8, color: '#10212b', opacity: 1}); });
+        polygon.on('mouseover', () => { if (hasReceipts(areaAmounts(level, feature))) polygon.setStyle({weight: 1.8, color: INK, opacity: 1}); });
         polygon.on('mouseout', () => polygon.setStyle(areaStyle(level, feature)));
       }
     });
@@ -364,12 +392,13 @@ async function render(fit = false) {
     if (streaming) {
       const layer = state.layer;
       await Promise.all(visibleDetailCodes().map(code => stateFile(level, code).then(found => {
+        progressTick(token);
         if (token !== state.render || layer !== state.layer) return;
         layer.addData(found);
         scheduleRefresh();
       })));
     }
-  } catch (error) { showError(error); }
+  } catch (error) { showError(error); if (progress.token === token) $('progress').hidden = true; }
   if (token === state.render) { updateScope(); refresh(); }
 }
 let refreshFrame = 0;
@@ -512,7 +541,7 @@ function updateLegend() {
   const level = coloredLevel(), label = levels[level].label;
   const swatches = (colors) => colors.map(c => `<span style="background:${c}"></span>`).join('');
   const empty = `<span class="swatch" style="background:${EMPTY}"></span>`;
-  const noneNote = level === 'state' ? `<div class="legend-note">${empty}No receipts</div>` : `<div class="legend-note">${label[0].toUpperCase() + label.slice(1)} with no receipts are hidden</div>`;
+  const noneNote = `<button class="empty-toggle" id="empty-toggle" role="switch" aria-checked="${state.showEmpty}">${empty}No receipts<i></i></button>`;
   const fadeRow = (color, what, format) => state.fade ? `<div class="fade-row"><span class="fade" style="background:linear-gradient(90deg,${faded(color, 0)},${color})"></span>` +
     `<div class="ticks ends"><span>${format(state.fade.lo)} or less</span><span>${format(state.fade.hi)}+ ${what}</span></div></div>` : '';
   let html;
@@ -531,6 +560,23 @@ function updateLegend() {
   if (filterOn()) html += `<div class="legend-note filter-note">Filter on: faint places are outside the range</div>`;
   if (level !== 'zcta' && level !== 'state') html += '<div class="legend-note">Area amounts are estimates apportioned from ZIPs</div>';
   $('legend').innerHTML = html;
+  fitLegend();
+}
+// The legend sits between the panel buttons and the footer; it shrinks (then collapses to its essentials)
+// rather than ever covering them. On short screens the legend and footer move beside the buttons instead.
+// Clicking the legend title collapses or expands it.
+function fitLegend() {
+  const legend = $('legend'), foot = $('foot');
+  legend.style.left = foot.style.left = '';
+  if (window.innerWidth <= 850) { legend.style.maxHeight = ''; return; }
+  const tools = $('tools').getBoundingClientRect();
+  let room = foot.getBoundingClientRect().top - tools.bottom - 20;
+  if (room < 110) {
+    legend.style.left = foot.style.left = (tools.right + 12) + 'px';
+    room = foot.getBoundingClientRect().top - 90 - 12;
+  }
+  legend.style.maxHeight = Math.max(0, room) + 'px';
+  legend.classList.toggle('squeezed', room < 110);
 }
 
 /* Charts: hand-built SVG at the card's real pixel size, so text stays legible when a panel is resized. */
@@ -665,7 +711,7 @@ function updateRank() {
 function highlight(key, on) {
   const polygon = state.index.get(key);
   if (!polygon) return;
-  if (on) { polygon.setStyle({weight: 2.4, color: '#10212b', opacity: 1}); polygon.bringToFront(); }
+  if (on) { polygon.setStyle({weight: 2.4, color: INK, opacity: 1}); polygon.bringToFront(); }
   else polygon.setStyle(areaStyle(state.layer.level, polygon.feature));
 }
 
@@ -737,9 +783,9 @@ function updateDonors() {
     const tx = byState.find(([code]) => code === 'TX')?.[1][0] || 0, top = byState.sort((p, q) => q[1][0] - p[1][0]).slice(0, 6);
     return `<section class="card"><header><h2><span class="dot" style="background:${hues[c]}"></span>${names[c]}</h2><span class="muted-cell">${money(total)}</span></header>
       <div class="stat-row"><div><b>${Math.round(100 * tx / total)}%</b><span>from Texas</span></div><div><b>${money(total / count)}</b><span>avg contribution</span></div><div><b>${byState.length}</b><span>states &amp; areas</span></div></div>
-      <div class="split" title="Texas vs. out of state"><i style="flex:${tx};background:${hues[c]}"></i><i style="flex:${total - tx};background:${hexBlend(hues[c], '#ffffff', .6)}"></i></div>
+      <div class="split" title="Texas vs. out of state"><i style="flex:${tx};background:${hues[c]}"></i><i style="flex:${total - tx};background:${hexBlend(hues[c], PALE, .6)}"></i></div>
       <ol class="bars">${top.map(([code, v]) => `<li data-code="${code}" class="${state.statesByCode[code] ? 'pick' : ''}"><span>${state.statesByCode[code] || code}</span>
-        <span class="bar"><i style="width:${100 * v[0] / top[0][1][0]}%;background:${code === 'TX' ? hues[c] : hexBlend(hues[c], '#ffffff', .35)}"></i></span><span>${Math.round(100 * v[0] / total)}%</span></li>`).join('')}</ol></section>`;
+        <span class="bar"><i style="width:${100 * v[0] / top[0][1][0]}%;background:${code === 'TX' ? hues[c] : hexBlend(hues[c], PALE, .35)}"></i></span><span>${Math.round(100 * v[0] / total)}%</span></li>`).join('')}</ol></section>`;
   }).join('') + '<p class="hint">Share of each candidate\'s itemized individual dollars by contributor\'s reported state. Click a state to open it.</p>';
 }
 
@@ -888,7 +934,7 @@ async function start() {
       const code = feature.properties.code;
       layer.bindTooltip(() => stateTooltip(code), {sticky: true, direction: 'top'});
       layer.on('click', e => { L.DomEvent.stopPropagation(e); if (state.timeline) openPanel('timeline', false); chooseState(code, modifier(e)); });
-      layer.on('mouseover', () => layer.setStyle({weight: 2.4, color: '#10212b'}));
+      layer.on('mouseover', () => layer.setStyle({weight: 2.4, color: INK}));
       layer.on('mouseout', () => layer.setStyle(stateStyle(feature)));
     }
   }).addTo(map);
@@ -981,6 +1027,11 @@ $('donors-body').addEventListener('click', e => { const li = e.target.closest('l
 $('time-slider').addEventListener('input', e => { play(false); state.timeIndex = Number(e.target.value); timelineChanged(); });
 $('time-play').addEventListener('click', () => play(!playing));
 $('time-mode').addEventListener('click', e => { const mode = e.target.dataset?.mode; if (mode) { state.timeMode = mode; timelineChanged(); } });
+$('legend').addEventListener('click', e => {
+  if (e.target.closest('#empty-toggle')) { state.showEmpty = !state.showEmpty; refresh(); }
+  else if (e.target.closest('.legend-title')) $('legend').classList.toggle('collapsed');
+});
+window.addEventListener('resize', fitLegend);
 $('home').addEventListener('click', resetView);
 $('nation').addEventListener('click', () => setNationwide(!state.nationwide));
 $('zoom-in').addEventListener('click', () => map.zoomIn());
