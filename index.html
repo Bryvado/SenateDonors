@@ -6,10 +6,10 @@
   <meta name="theme-color" content="#0f151a">
   <title>Senate donors · FEC ZIP map</title>
   <link rel="stylesheet" href="vendor/leaflet.css">
-  <link rel="stylesheet" href="style.css?v=23">
+  <link rel="stylesheet" href="style.css?v=24">
   <script defer src="vendor/leaflet.js"></script>
   <script defer src="vendor/topojson-client.min.js"></script>
-  <script defer src="app.js?v=23"></script>
+  <script defer src="app.js?v=24"></script>
 </head>
 <body>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -19,7 +19,7 @@
   <div class="masthead panel">
     <div class="brand" aria-label="Senate donors">SENATE<span> / </span>DONORS</div>
     <div class="separator" aria-hidden="true"></div>
-    <div class="control period" role="group" aria-labelledby="period-name"><span id="period-name">Period · <b id="period-value">All reported</b></span>
+    <div class="control period" id="period-control" role="group" aria-labelledby="period-name"><span id="period-name">Period · <b id="period-value">All reported</b></span>
       <div class="period-slider">
         <div class="period-track"><span id="period-fill" class="period-fill"></span><i style="left:33.33%"></i><i style="left:66.67%"></i></div>
         <input type="range" id="period-lo" min="0" max="3" step="1" value="0" aria-label="Period start" aria-valuetext="From the start">
@@ -46,7 +46,10 @@
       </select>
     </label>
     <label class="control"><span>Color by</span>
-      <select id="measure"><option value="lead">Who led</option><option value="volume">Total raised</option><option value="capita">Per 100 residents</option></select>
+      <select id="measure"><option value="lead">Who led</option><option value="volume">Total raised</option><option value="capita">Per 100 residents</option><option value="maxouts">Max-out donors</option><option value="maxcapita">Max-out donors per 10,000 residents</option></select>
+    </label>
+    <label class="control" id="election-control" hidden><span>Election</span>
+      <select id="election"><option value="all">All elections</option><option value="primary">Primary</option><option value="runoff">Runoff</option><option value="general">General</option></select>
     </label>
     <button id="about-toggle" class="icon" title="Sources and methods" aria-label="Sources and methods" aria-expanded="false">i</button>
   </div>
@@ -86,7 +89,7 @@
     <div class="float-body">
       <div class="rank-controls">
         <label class="rank-by">Places <select id="rank-level"><option value="state">States</option><option value="zcta">ZIP (ZCTA)</option><option value="county">Counties</option><option value="cd">Congressional districts</option><option value="cbsa">Metro/micro areas</option><option value="cousub">County subdivisions</option></select></label>
-        <label class="rank-by">Rank by <select id="rank-by"><option value="total">Total raised</option><option value="capita">Per 100 residents</option><option value="first">First candidate's share</option><option value="second">Second candidate's share</option><option value="avg">Average contribution</option><option value="count">Contributions</option></select></label>
+        <label class="rank-by">Rank by <select id="rank-by"><option value="total">Total raised</option><option value="capita">Per 100 residents</option><option value="first">First candidate's share</option><option value="second">Second candidate's share</option><option value="avg">Average contribution</option><option value="count">Contributions</option><option value="maxouts">Max-out donors</option><option value="maxcapita">Max-out donors per 10,000 residents</option><option value="maxsingle">Maxed out in one gift</option><option value="maxaccum">Maxed out over several gifts</option></select></label>
         <div class="seg" id="rank-order" role="group" aria-label="Order"><button data-order="desc" aria-pressed="true">Highest first</button><button data-order="asc" aria-pressed="false">Lowest first</button></div>
       </div>
       <ol id="rank-list" class="rank-list"></ol>
@@ -126,9 +129,10 @@
     <h1>About this map</h1>
     <p>Itemized contributions from individuals to the principal federal campaign committees of James Talarico, John Cornyn, and Ken Paxton, placed at each contributor's reported ZIP. Receipt dates define the three periods (through the Mar 3 primary, Mar 4 – May 26 runoff, and since May 27); drag the two Period handles to include any continuous stretch of them. Amendments replace superseded reports. Unitemized contributions (generally $200 or less per donor per election) are not included.</p>
     <p><strong>Who led</strong> tints every place toward whichever of the two compared candidates raised more there, in four steps per side by the leader's share (50–55%, 55–65%, 65–80%, 80%+); even a narrow lead is shown, and only an exact tie is neutral. There is no fixed cutoff for places with few dollars: colors fade smoothly toward pale as the dollars behind them shrink, relative to the places shown. <strong>Total raised</strong> is the pair's combined dollars. <strong>Per 100 residents</strong> divides that by ACS 2020–2024 population and fades places with few residents, whose rates are less stable. For these two, each color holds about a fifth of the places shown, and the legend lists the cutoffs. Only one level is colored at a time: states when nothing is open, otherwise just the open areas, with other states left plain. Contribution counts are entries, not unique donors.</p>
-    <p>ZIP outlines are 2020 Census ZIP Code Tabulation Areas (ZCTAs), which do not match every mailing ZIP. The County, Congressional district, Metro/micro area, and County subdivision views apportion each reported ZIP's totals among the areas it overlaps, using the share of the ZIP's residential addresses in each area (all addresses for ZIPs with none) from the HUD USPS ZIP crosswalk (June 2026). Amounts and counts there are <strong>estimates</strong>. Areas where neither compared candidate has receipts in the selected period are not drawn. ZIPs outside the crosswalk and non-metro or unassigned portions are left out of the shading, but state totals still include them. Congressional districts are the 119th Congress districts, which the HUD crosswalk uses; Texas's 2025 mid-decade plan is not shown.</p>
+    <p>ZIP outlines are 2020 Census ZIP Code Tabulation Areas (ZCTAs), which do not match every mailing ZIP; the ZIP view always uses the reported ZIP. In the County, Congressional district, Metro/micro area, and County subdivision views, each contribution whose street address the Census geocoder matched is placed exactly, in the area that contains the address. Only the rest (unmatched addresses, PO boxes, ties) is <strong>estimated</strong>: that part of each reported ZIP's total is apportioned among the areas the ZIP overlaps by the share of its residential addresses in each (all addresses for ZIPs with none), from the HUD USPS ZIP crosswalk (June 2026). Tooltips show how much of each area's dollars were placed by address. <span id="about-placement"></span> ZIPs outside the crosswalk and non-metro or unassigned portions are left out of the shading, but state totals still include them. Congressional districts are the 119th Congress districts (the map's boundaries and the HUD crosswalk); Texas's 2025 mid-decade plan is not shown. Addresses are used only while the data are refreshed and are never published.</p>
+    <p><strong>Max-out donors</strong> reached the federal limit of $3,500 per election from one person to a candidate (2025–26 cycle; the primary, runoff, and general are separate elections, and a contribution without a designation counts toward the next election after its date). A donor is a committee's contributions under one last name, first name, and ZIP. <em>In one gift</em> means a single contribution of $3,500 or more; <em>accumulated</em> means two or more that add up to it. Each donor is placed at their latest contribution for that election. Gifts over the limit are listed as reported; committees normally redesignate or refund the excess later, and Schedule B refunds are not subtracted, so a max-out means the money was received, not necessarily kept. The Period slider does not apply; choose an election instead. Rates are per 10,000 residents.</p>
     <p>Choose a <strong>Map view</strong> to switch geography, or select <strong>Choose state(s)</strong> to open the compact state checklist in the left map controls. The <strong>US</strong> button switches between nationwide and selected states. From the U.S. overview, choosing an area type opens its nationwide view. Nationwide ZCTAs and county subdivisions draw at every zoom level: boundaries for the states in view stream in, nearest first, and more load as you pan; the top places list follows the loaded states. The map opens on the U.S. overview. Click a state to show it alone; Shift-, Ctrl- or ⌘-click (or “Add state”) to compare several. Use the location path at the bottom left to return to your state selection or the U.S. overview. The panels on the left open <strong>Totals</strong>, <strong>Top places</strong>, <strong>Donor map</strong>, <strong>Filter</strong>, and <strong>Timeline</strong>. Double-click any area to return to the U.S. view. Drag panels by their title bars and resize them from the corner; they reset when you reload.</p>
-    <div class="links"><a href="data/receipts.csv" download>ZIP totals ↗</a><a href="data/state_totals.csv" download>State totals ↗</a><a href="data/levels/county.csv" download>County estimates ↗</a><a href="https://www.fec.gov/data/" target="_blank" rel="noopener">FEC ↗</a><a href="https://www.huduser.gov/portal/datasets/usps_crosswalk.html" target="_blank" rel="noopener">HUD crosswalk ↗</a><a href="https://www.census.gov/programs-surveys/acs/data/summary-file.html" target="_blank" rel="noopener">ACS population ↗</a></div>
+    <div class="links"><a href="data/receipts.csv" download>ZIP totals ↗</a><a href="data/state_totals.csv" download>State totals ↗</a><a href="data/levels/county.csv" download>County totals ↗</a><a href="data/maxouts.csv" download>Max-out donors by ZIP ↗</a><a href="https://www.fec.gov/data/" target="_blank" rel="noopener">FEC ↗</a><a href="https://www.huduser.gov/portal/datasets/usps_crosswalk.html" target="_blank" rel="noopener">HUD crosswalk ↗</a><a href="https://www.census.gov/programs-surveys/acs/data/summary-file.html" target="_blank" rel="noopener">ACS population ↗</a></div>
     <p class="small">No individual names or addresses are published here. Filing updates are checked every six hours; the display changes only after the FEC files a new or amended report and the totals pass reconciliation.</p>
   </aside>
   <div id="error" class="error panel" role="alert" hidden></div>

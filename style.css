@@ -83,3 +83,4 @@ html.dark .period-slider input::-webkit-slider-thumb{background:#0f151a;border-c
 /* Loading bar */
 .progress{position:absolute;top:84px;left:50%;transform:translateX(-50%);z-index:100000;display:flex;align-items:center;gap:8px;padding:7px 10px;font-size:10px;color:#93a3ab;font-variant-numeric:tabular-nums}.progress[hidden]{display:none}.progress-bar{width:180px;height:4px;border-radius:2px;background:#2a353d;overflow:hidden}.progress-bar i{display:block;height:100%;width:0;background:#7cc0ea;transition:width .2s}
 @media(max-width:850px){.progress{top:auto;bottom:130px}}
+.control.inactive{opacity:.45}.control.inactive input{pointer-events:none}.control[hidden]{display:none}.tooltip-head{margin-top:4px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;font-size:9.5px}
