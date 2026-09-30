@@ -242,7 +242,9 @@ function passes(amounts, pop) {
 // strongest to the first's. There is no neutral band: any lead, however narrow, tints toward the leader.
 const LEAD_CUTS = [.55, .65, .8];
 function leadClasses() {
-  const side = (hue) => [.3, .5, .75, 1].map(t => hexBlend(NEUTRAL, hue, t));
+  // Steps spread wider than a plain blend, with the strongest darker than the hue itself, so a
+  // faded strong lead still reads apart from a narrow one.
+  const side = (hue) => [...[.22, .5, .8].map(t => hexBlend(NEUTRAL, hue, t)), hexBlend(hue, '#000000', .28)];
   return [...side(hues[state.second]).reverse(), ...side(hues[state.first])];
 }
 function leadColor(share) {
@@ -256,7 +258,8 @@ function strength(weight) {
   if (f.hi <= f.lo) return 1;
   return Math.max(0, Math.min(1, (Math.log(weight) - Math.log(f.lo)) / (Math.log(f.hi) - Math.log(f.lo))));
 }
-const faded = (color, s) => hexBlend(PALE, color, .15 + .85 * s);
+// The fade keeps at least 55% of the color, so the lead steps stay apart however few dollars are behind them.
+const faded = (color, s) => hexBlend(PALE, color, .55 + .45 * s);
 function classify(amounts, pop, included = true) {
   const a = amounts[0][0], b = amounts[1][0], total = a + b;
   if (!included) return {fill: EMPTY, kind: 'out'};
