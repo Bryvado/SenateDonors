@@ -45,7 +45,7 @@ const stats = {
 };
 const state = {span: [0, 3], first: 'C00919084', second: 'C00901918', measure: 'lead', level: 'zcta',
   selected: [], lastSelected: [], lastLocalLevel: 'zcta', localPending: false, focused: null, nationwide: false,
-  receipts: new Map(), totals: new Map(), areas: {}, unallocated: new Map(),
+  receipts: new Map(), receiptsLoaded: null, totals: new Map(), areas: {}, unallocated: new Map(),
   population: {}, monthly: null, months: [], geo: new Map(), layer: null, index: new Map(), render: 0, visibleKey: null, states: null,
   coverage: null, breaks: [], fade: null, chartMode: 'monthly', timeline: false, timeIndex: 0, timeMode: 'cumulative',
   rankBy: 'total', rankDesc: true, rankStates: false, showEmpty: true,
@@ -71,10 +71,56 @@ async function fetchOk(url) {
 }
 const json = async (url) => (await fetchOk(url)).json();
 const file = async (url) => (await fetchOk(url)).text();
-async function packed(url) {
+/* Boundary files: data/manifest.json maps each path to a content hash. A file is requested
+   as path?h=hash and kept in Cache Storage under that URL, so it is downloaded again only when
+   it changes (Pages gives every file a new ETag on each deploy). Without Cache Storage
+   (private windows, some embedded browsers) files come straight from the network. */
+const GEO_CACHE = 'senatedonors-geo';
+const finePointer = matchMedia('(hover: hover) and (pointer: fine)').matches;
+let manifest = {};
+let geoCache = null;
+function openGeoCache() {
+  if (!geoCache) geoCache = (async () => { try { return globalThis.caches ? await caches.open(GEO_CACHE) : null; } catch { return null; } })();
+  return geoCache;
+}
+async function loadManifest() {
+  try {
+    const response = await fetch('data/manifest.json', {cache: 'no-cache'});
+    if (response.ok) manifest = (await response.json()).files || {};
+  } catch { manifest = {}; }
+}
+const geoUrl = (path) => manifest[path] ? `${path}?h=${manifest[path]}` : path;
+async function geoResponse(path) {
+  const url = geoUrl(path), cache = manifest[path] ? await openGeoCache() : null;
+  if (cache) {
+    try { const hit = await cache.match(url); if (hit) return hit; } catch { /* fall through to the network */ }
+  }
   const response = await fetchOk(url);
+  if (cache) cache.put(url, response.clone()).catch(() => {});
+  return response;
+}
+// Drop cached files whose hash is no longer in the manifest.
+async function evictGeo() {
+  const cache = await openGeoCache();
+  if (!cache || !Object.keys(manifest).length) return;
+  try {
+    for (const request of await cache.keys()) {
+      const url = new URL(request.url), path = url.pathname.slice(url.pathname.indexOf('/data/') + 1);
+      if (manifest[path] !== url.searchParams.get('h')) await cache.delete(request);
+    }
+  } catch { /* eviction is best effort */ }
+}
+// Warm the cache for a file without parsing it (hover prefetch).
+function prefetchGeo(path) {
+  if (!manifest[path] || navigator.connection?.saveData) return;
+  openGeoCache().then(cache => cache && cache.match(geoUrl(path)).then(hit => hit || geoResponse(path).then(r => r.arrayBuffer()))).catch(() => {});
+}
+// Gzipped TopoJSON (or GeoJSON) -> GeoJSON FeatureCollection.
+async function packed(path) {
+  const response = await geoResponse(path);
   if (!globalThis.DecompressionStream) throw new Error('This browser needs gzip stream support to display boundaries.');
-  return new Response(response.body.pipeThrough(new DecompressionStream('gzip'))).json();
+  const data = await new Response(response.body.pipeThrough(new DecompressionStream('gzip'))).json();
+  return data.type === 'Topology' ? topojson.feature(data, data.objects[Object.keys(data.objects)[0]]) : data;
 }
 function addRows(rows, destination, key) {
   for (const row of rows) {
@@ -279,9 +325,19 @@ function showError(error) {
 }
 
 /* Data loading */
+// Parsed boundary files, most recently used last. Only a few are kept beyond the ones on
+// screen: the compressed bytes stay in Cache Storage, and parsed files are large.
+const GEO_KEEP = 6;
 async function cached(key, load) {
-  if (!state.geo.has(key)) state.geo.set(key, load().catch(error => { state.geo.delete(key); throw error; }));
-  return state.geo.get(key);
+  let entry = state.geo.get(key);
+  if (entry) state.geo.delete(key);
+  else entry = load().catch(error => { state.geo.delete(key); throw error; });
+  state.geo.set(key, entry);
+  return entry;
+}
+function trimGeo(inUse) {
+  let spare = [...state.geo.keys()].filter(key => !inUse.has(key));
+  while (spare.length > GEO_KEEP) state.geo.delete(spare.shift());
 }
 const tag = (features, code) => features.map(f => ({...f, properties: {...f.properties, _state: code}}));
 function visibleDetailCodes() {
@@ -298,16 +354,16 @@ const detailKey = () => state.nationwide && levels[state.level].detail ?
 async function features(level, token) {
   if (!state.nationwide && !state.selected.length) return [];
   if (levels[level].national && !levels[level].detail) {
-    const all = (await cached(level, () => packed(`data/levels/geo/${level}.bin?v=1`))).features;
+    const all = (await cached(level, () => packed(`data/levels/geo/${level}.bin`))).features;
     progressTick(token);
     return state.nationwide ? all : all.filter(f => f.properties.states.some(s => state.selected.includes(s)));
   }
   const files = await Promise.all(state.selected.map(code => stateFile(level, code).then(f => { progressTick(token); return f; })));
   return files.flat();
 }
+const statePath = (level, code) => `${level === 'zcta' ? 'data/zctas' : 'data/levels/geo/cousub'}/${code}.bin`;
 function stateFile(level, code) {
-  const dir = level === 'zcta' ? 'data/zctas' : 'data/levels/geo/cousub', v = level === 'zcta' ? 3 : 1;
-  return cached(level + '|' + code, () => packed(`${dir}/${encodeURIComponent(code)}.bin?v=${v}`)).then(geo => tag(geo.features, code));
+  return cached(level + '|' + code, () => packed(statePath(level, code))).then(geo => tag(geo.features, code));
 }
 // Tens of thousands of shapes: canvas keeps nationwide ZCTAs and subdivisions responsive.
 const detailCanvas = L.canvas({pane: 'zctaPane', padding: .4});
@@ -315,6 +371,12 @@ const loadPopulation = (name) => state.population[name] ? null :
   file(`data/population/${name}.csv`).then(text => { state.population[name] = new Map(csv(text).map(r => [r.geoid, Number(r.population)])); });
 async function loadLevel(level) {
   const jobs = [];
+  // ZIP receipts are only needed once a ZIP layer is drawn or ranked.
+  if (level === 'zcta') {
+    state.receiptsLoaded ||= file('data/receipts.csv').then(text => addRows(csv(text), state.receipts, row => row.state + '|' + row.zip + '|' + row.candidate))
+      .catch(error => { state.receiptsLoaded = null; throw error; });
+    jobs.push(state.receiptsLoaded);
+  }
   if (level !== 'zcta' && !state.areas[level]) jobs.push(file(`data/levels/${level}.csv`).then(text => {
     const areas = new Map();
     addRows(csv(text), areas, row => row.geoid + '|' + row.candidate);
@@ -356,7 +418,8 @@ async function render(fit = false) {
     const files = !streaming && !state.selected.length && !state.nationwide ? 0 : streaming ? visibleDetailCodes().length
       : levels[level].national && !levels[level].detail ? 1 : state.selected.length;
     progressStart(token, files + 1);
-    await loadLevel(level);
+    // The U.S. overview needs only state totals; area data loads when areas are drawn.
+    if (files) await loadLevel(level);
     progressTick(token);
     const list = streaming ? [] : await features(level, token);
     if (token !== state.render) return;
@@ -404,7 +467,11 @@ async function render(fit = false) {
       })));
     }
   } catch (error) { showError(error); if (progress.token === token) $('progress').hidden = true; }
-  if (token === state.render) { updateScope(); refresh(); }
+  if (token === state.render) {
+    const codes = detailNation() ? visibleDetailCodes() : state.selected;
+    trimGeo(new Set(levels[level].detail ? codes.map(code => level + '|' + code) : [level]));
+    updateScope(); refresh();
+  }
 }
 let refreshFrame = 0;
 function scheduleRefresh() { cancelAnimationFrame(refreshFrame); refreshFrame = requestAnimationFrame(() => { updateScope(); refresh(); }); }
@@ -914,9 +981,8 @@ function refresh() {
   updateLegend(); updatePanel(); updateRank(); updateDonors(); updateTimeline(); updateFilter();
 }
 async function start() {
-  const [boundaries, receipts, totals, coverage] = await Promise.all([
-    json('data/states.json?v=2'), file('data/receipts.csv'), file('data/state_totals.csv'), json('data/coverage.json')]);
-  addRows(csv(receipts), state.receipts, row => row.state + '|' + row.zip + '|' + row.candidate);
+  const [boundaries, totals, coverage] = await Promise.all([
+    loadManifest().then(() => geoResponse('data/states.json')).then(r => r.json()), file('data/state_totals.csv'), json('data/coverage.json')]);
   addRows(csv(totals), state.totals, row => row.state + '|' + row.candidate);
   state.coverage = coverage;
   state.statesByCode = Object.fromEntries(boundaries.features.map(f => [f.properties.code, f.properties.name]));
@@ -940,8 +1006,13 @@ async function start() {
       const code = feature.properties.code;
       layer.bindTooltip(() => stateTooltip(code), {sticky: true, direction: 'top'});
       layer.on('click', e => { L.DomEvent.stopPropagation(e); if (state.timeline) openPanel('timeline', false); chooseState(code, modifier(e)); });
-      layer.on('mouseover', () => layer.setStyle({weight: 2.4, color: INK}));
-      layer.on('mouseout', () => layer.setStyle(stateStyle(feature)));
+      let prefetch;
+      layer.on('mouseover', () => {
+        layer.setStyle({weight: 2.4, color: INK});
+        // Hovering a state for a moment fetches its boundary file into the cache, ready for the click.
+        if (levels[state.level].detail && finePointer) prefetch = setTimeout(() => prefetchGeo(statePath(state.level, code)), 200);
+      });
+      layer.on('mouseout', () => { clearTimeout(prefetch); layer.setStyle(stateStyle(feature)); });
     }
   }).addTo(map);
   $('coverage').textContent = `FEC through ${coverage.coverage_end} · ${coverage.filing_count} filings`;
@@ -950,6 +1021,7 @@ async function start() {
   syncCandidates();
   syncControls();
   await render();
+  (window.requestIdleCallback || setTimeout)(() => evictGeo());
 }
 
 function periodInput(which) {
@@ -1056,7 +1128,7 @@ $('tiles').addEventListener('click', () => {
   active ? map.removeLayer(tiles) : tiles.addTo(map);
   $('tiles').setAttribute('aria-pressed', String(!active));
 });
-function about(open) { $('about').hidden = !open; $('about-toggle').setAttribute('aria-expanded', String(open)); }
+function about(open) { $('about').hidden = !open; if (open) front($('about')); $('about-toggle').setAttribute('aria-expanded', String(open)); }
 $('about-toggle').addEventListener('click', () => about($('about').hidden));
 $('about-close').addEventListener('click', () => about(false));
 document.addEventListener('keydown', e => {

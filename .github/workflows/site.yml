@@ -26,10 +26,13 @@ jobs:
         env:
           FEC_API_KEY: ${{ secrets.FEC_API_KEY }}
         run: python3 scripts/update_data.py
+      # Content hashes of the boundary files; browsers keep a file cached until its hash changes.
+      - name: Update boundary manifest
+        run: python3 scripts/build_manifest.py
       - name: Commit only changed data
         if: github.event_name != 'push'
         run: |
-          git add data/receipts.csv data/state_totals.csv data/coverage.json data/filings.json data/state_monthly.csv data/levels/*.csv
+          git add data/receipts.csv data/state_totals.csv data/coverage.json data/filings.json data/state_monthly.csv data/levels/*.csv data/manifest.json
           if ! git diff --cached --quiet; then
             git config user.name 'senate-donors-bot'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
