@@ -31,6 +31,12 @@ def shared_strings(book):
 
 
 def rows(path):
+    for values in cells(path):
+        yield [values.get(c, "") for c in sorted(values, key=lambda c: (len(c), c))]
+
+
+def cells(path):
+    """Each row of the first sheet as {column letter: text}; empty cells are absent."""
     with zipfile.ZipFile(path) as book:
         strings = shared_strings(book)
         with book.open("xl/worksheets/sheet1.xml") as sheet:
@@ -50,7 +56,7 @@ def rows(path):
                             value = strings[int(value)]
                     values[column] = value
                 element.clear()
-                yield [values.get(c, "") for c in sorted(values, key=lambda c: (len(c), c))]
+                yield values
 
 
 def ratio(text):

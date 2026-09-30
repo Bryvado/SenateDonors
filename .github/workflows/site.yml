@@ -19,20 +19,41 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # The first run after the address-placement change geocodes every address
+    # (about 55,000, ~6 minutes); the refresh stops geocoding after GEOCODE_BUDGET_MIN
+    # and leaves the rest to the ZIP split until the next run.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
+      # Geocoding results (hashed address -> Census block) are address-derived, so they
+      # live only in the Actions cache, never in git. Each run saves a new entry; the
+      # newest one with the prefix is restored.
+      - name: Restore geocode cache
+        if: github.event_name != 'push'
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/geocode.json.gz
+          key: geocode-${{ github.run_id }}
+          restore-keys: geocode-
       - name: Check FEC for new or amended filings
         if: github.event_name != 'push'
         env:
           FEC_API_KEY: ${{ secrets.FEC_API_KEY }}
+          GEOCODE_BUDGET_MIN: '60'
         run: python3 scripts/update_data.py
+      - name: Save geocode cache
+        if: always() && github.event_name != 'push' && hashFiles('.cache/geocode.json.gz') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/geocode.json.gz
+          key: geocode-${{ github.run_id }}
       # Content hashes of the boundary files; browsers keep a file cached until its hash changes.
       - name: Update boundary manifest
         run: python3 scripts/build_manifest.py
       - name: Commit only changed data
         if: github.event_name != 'push'
         run: |
-          git add data/receipts.csv data/state_totals.csv data/coverage.json data/filings.json data/state_monthly.csv data/levels/*.csv data/manifest.json
+          git add data/receipts.csv data/state_totals.csv data/coverage.json data/filings.json data/state_monthly.csv data/levels/*.csv data/maxouts.csv data/manifest.json
           if ! git diff --cached --quiet; then
             git config user.name 'senate-donors-bot'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'

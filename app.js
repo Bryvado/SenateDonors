@@ -14,6 +14,15 @@ function periodLabel() {
   if (b === phases.length) return `Since ${['', 'Mar 4', 'May 27'][a]}`;
   return ['', 'Mar 4', 'May 27'][a] + ' – ' + phaseEdges[b];
 }
+// Max-out donors are counted per election (FEC limits apply separately to the primary, runoff and general).
+const elections = ['primary', 'runoff', 'general'];
+const electionLabel = () => ({all: 'all elections', primary: 'primary', runoff: 'runoff', general: 'general'})[state.election];
+const maxMode = () => state.measure === 'maxouts' || state.measure === 'maxcapita';
+const kindNow = () => maxMode() ? 'max' : 'dollars';
+const perResidents = () => state.measure === 'capita' || state.measure === 'maxcapita';
+// Dollars are shown per 100 residents; max-out donors, far fewer, per 10,000.
+const PER = () => maxMode() ? 10000 : 100;
+const perLabel = () => maxMode() ? 'per 10,000 residents' : 'per 100 residents';
 const phaseMonths = {pre_primary: ['2025-01', '2026-03'], between_primary_runoff: ['2026-03', '2026-05'], post_runoff: ['2026-05', '9999-12']};
 const money = (n) => '$' + Math.round(n).toLocaleString('en-US');
 const short = (n) => n >= 1e6 ? '$' + +(n / 1e6).toFixed(1) + 'm' : n >= 1e3 ? '$' + +(n / 1e3).toFixed(1) + 'k' : '$' + Math.round(n);
@@ -36,17 +45,22 @@ const levels = {
 };
 const ramp = ['#fde725', '#5ec962', '#21918c', '#3b528b', '#440154']; // viridis, light to dark
 // Statistics shared by the filter and the rankings. value(first, second, population) -> number or null.
+// With a max-out measure the amounts are donor counts [donors, in one gift, accumulated, over-limit gifts].
+const donors = (v) => Math.abs(v - Math.round(v)) < .005 ? Math.round(v).toLocaleString() : '≈' + v.toFixed(1);
 const stats = {
-  total: {label: () => 'Total raised', value: (a, b) => a[0] + b[0], log: true, format: short},
-  capita: {label: () => 'Per 100 residents', value: (a, b, pop) => pop ? 100 * (a[0] + b[0]) / pop : null, log: true, format: (v) => v < 10 ? '$' + +v.toFixed(2) : short(v)},
+  total: {label: () => maxMode() ? 'Max-out donors' : 'Total raised', value: (a, b) => a[0] + b[0], log: true, format: (v) => maxMode() ? donors(v) : short(v)},
+  capita: {label: () => maxMode() ? 'Per 10,000 residents' : 'Per 100 residents', value: (a, b, pop) => pop ? PER() * (a[0] + b[0]) / pop : null, log: true,
+    format: (v) => maxMode() ? +v.toPrecision(2) + '' : v < 10 ? '$' + +v.toFixed(2) : short(v)},
   share: {label: () => `${names[state.first]}'s share`, value: (a, b) => a[0] + b[0] > 0 ? a[0] / (a[0] + b[0]) : null, log: false, format: (v) => Math.round(100 * v) + '%'},
-  avg: {label: () => 'Average contribution', value: (a, b) => a[2] + b[2] > 0 ? (a[0] + b[0]) / (a[2] + b[2]) : null, log: true, format: short},
-  count: {label: () => 'Contributions', value: (a, b) => a[2] + b[2], log: true, format: (v) => people(v)},
+  avg: {label: () => maxMode() ? 'Share in one gift' : 'Average contribution',
+    value: (a, b) => maxMode() ? (a[0] + b[0] > 0 ? (a[1] + b[1]) / (a[0] + b[0]) : null) : a[2] + b[2] > 0 ? (a[0] + b[0]) / (a[2] + b[2]) : null,
+    get log() { return !maxMode(); }, format: (v) => maxMode() ? Math.round(100 * v) + '%' : short(v)},
+  count: {label: () => maxMode() ? 'Accumulated' : 'Contributions', value: (a, b) => a[2] + b[2], log: true, format: (v) => maxMode() ? donors(v) : people(v)},
 };
-const state = {span: [0, 3], first: 'C00919084', second: 'C00901918', measure: 'lead', level: 'zcta',
+const state = {span: [0, 3], first: 'C00919084', second: 'C00901918', measure: 'lead', election: 'all', level: 'zcta',
   selected: [], lastSelected: [], lastLocalLevel: 'zcta', localPending: false, focused: null, nationwide: false,
   receipts: new Map(), receiptsLoaded: null, totals: new Map(), areas: {}, unallocated: new Map(),
-  population: {}, monthly: null, months: [], geo: new Map(), layer: null, index: new Map(), render: 0, visibleKey: null, states: null,
+  levelLoads: {}, maxLoaded: null, population: {}, monthly: null, months: [], geo: new Map(), layer: null, index: new Map(), render: 0, visibleKey: null, states: null,
   coverage: null, breaks: [], fade: null, chartMode: 'monthly', timeline: false, timeIndex: 0, timeMode: 'cumulative',
   rankBy: 'total', rankDesc: true, rankStates: false, showEmpty: true,
   filter: {stat: 'total', ranges: {}, all: false, scope: ''}};
@@ -122,24 +136,44 @@ async function packed(path) {
   const data = await new Response(response.body.pipeThrough(new DecompressionStream('gzip'))).json();
   return data.type === 'Topology' ? topojson.feature(data, data.objects[Object.keys(data.objects)[0]]) : data;
 }
+// Each item holds, per phase, [dollars, net dollars, count, dollars placed by address, count placed by
+// address] (area levels only), and in .max the max-out donors per election [in one gift, accumulated, over-limit gifts].
+function itemFor(store, id) {
+  let item = store.get(id);
+  if (!item) { item = Object.fromEntries(phases.map(p => [p, [0, 0, 0, 0, 0]])); store.set(id, item); }
+  return item;
+}
 function addRows(rows, destination, key) {
   for (const row of rows) {
-    const id = key(row);
-    let item = destination.get(id);
-    if (!item) { item = Object.fromEntries(phases.map(p => [p, [0, 0, 0]])); destination.set(id, item); }
-    item[row.phase] = [Number(row.positive_cents) / 100, Number(row.net_cents) / 100, Number(row.count)];
+    itemFor(destination, key(row))[row.phase] = [Number(row.positive_cents) / 100, Number(row.net_cents) / 100, Number(row.count),
+      Number(row.address_cents || 0) / 100, Number(row.address_count || 0)];
   }
 }
-function values(store, id) {
-  const item = store.get(id);
-  if (!item) return [0, 0, 0];
-  return phases.slice(...state.span).reduce((sum, phase) => sum.map((n, i) => n + item[phase][i]), [0, 0, 0]);
+function addMaxouts(rows, destination, key) {
+  for (const row of rows) {
+    const item = itemFor(destination, key(row)), sums = (item.max ||= {})[row.election] ||= [0, 0, 0];
+    sums[0] += Number(row.single_gift); sums[1] += Number(row.accumulated); sums[2] += Number(row.over_limit_contributions);
+  }
 }
-const comparison = (store, key) => [values(store, key + '|' + state.first), values(store, key + '|' + state.second)];
+function values(store, id, kind = kindNow()) {
+  const item = store.get(id);
+  if (kind === 'max') {
+    const out = [0, 0, 0, 0];
+    for (const e of state.election === 'all' ? elections : [state.election]) {
+      const m = item?.max?.[e];
+      if (m) { out[1] += m[0]; out[2] += m[1]; out[3] += m[2]; }
+    }
+    out[0] = out[1] + out[2];
+    return out;
+  }
+  if (!item) return [0, 0, 0, 0, 0];
+  return phases.slice(...state.span).reduce((sum, phase) => sum.map((n, i) => n + item[phase][i]), [0, 0, 0, 0, 0]);
+}
+const comparison = (store, key, kind) => [values(store, key + '|' + state.first, kind), values(store, key + '|' + state.second, kind)];
 const timeMonth = () => state.months[state.timeIndex];
 // State amounts for one candidate: the selected period, or the timeline month (cumulative or single).
-function stateValues(code, candidate) {
-  if (!state.timeline) return values(state.totals, code + '|' + candidate);
+function stateValues(code, candidate, kind = kindNow()) {
+  if (!state.timeline || kind === 'max') return values(state.totals, code + '|' + candidate, kind);
   const end = timeMonth(), sum = [0, 0, 0];
   for (const m of state.months) {
     if (m > end || (state.timeMode === 'month' && m !== end)) continue;
@@ -148,7 +182,7 @@ function stateValues(code, candidate) {
   }
   return sum;
 }
-const stateAmounts = (code) => [stateValues(code, state.first), stateValues(code, state.second)];
+const stateAmounts = (code, kind) => [stateValues(code, state.first, kind), stateValues(code, state.second, kind)];
 function hexBlend(a, b, ratio) {
   const toRGB = x => [1, 3, 5].map(i => parseInt(x.slice(i, i + 2), 16));
   const x = toRGB(a), y = toRGB(b), t = Math.max(0, Math.min(1, ratio));
@@ -167,16 +201,16 @@ function areaKey(level, feature) {
   return level === 'zcta' ? {store: state.receipts, key: p._state + '|' + p.zip, pop: p.zip} : {store: state.areas[level], key: p.geoid, pop: p.geoid};
 }
 const areaTitle = (level, feature) => level === 'zcta' ? `ZCTA ${feature.properties.zip} · ${feature.properties._state}` : feature.properties.name;
-function stateItems() {
-  return Object.keys(state.statesByCode).map(code => ({key: code, name: state.statesByCode[code], amounts: stateAmounts(code), pop: population('state', code), isState: true}));
+function stateItems(kind) {
+  return Object.keys(state.statesByCode).map(code => ({key: code, name: state.statesByCode[code], amounts: stateAmounts(code, kind), pop: population('state', code), isState: true}));
 }
-function areaItems() {
+function areaItems(kind) {
   const level = state.layer.level, seen = new Set(), list = [];
   for (const polygon of state.layer.getLayers()) {
     const {store, key, pop} = areaKey(level, polygon.feature);
     if (seen.has(key)) continue;
     seen.add(key);
-    list.push({key, name: areaTitle(level, polygon.feature), amounts: comparison(store, key), pop: population(level, pop)});
+    list.push({key, name: areaTitle(level, polygon.feature), amounts: comparison(store, key, kind), pop: population(level, pop)});
   }
   return list;
 }
@@ -225,11 +259,11 @@ function classify(amounts, pop, included = true) {
   const a = amounts[0][0], b = amounts[1][0], total = a + b;
   if (!included) return {fill: EMPTY, kind: 'out'};
   if (total <= 0) return {fill: EMPTY, kind: 'empty'};
-  if (state.measure === 'volume') return {fill: ramp[bin(total, state.breaks)], kind: 'value'};
-  if (state.measure === 'capita') {
+  if (state.measure === 'volume' || state.measure === 'maxouts') return {fill: ramp[bin(total, state.breaks)], kind: 'value'};
+  if (perResidents()) {
     if (!pop) return {fill: EMPTY, kind: 'nopop'};
     const s = strength(pop);
-    return {fill: faded(ramp[bin(100 * total / pop, state.breaks)], s), kind: 'value', s};
+    return {fill: faded(ramp[bin(PER() * total / pop, state.breaks)], s), kind: 'value', s};
   }
   const s = strength(total);
   return {fill: faded(leadColor(a / total), s), kind: 'value', s};
@@ -275,13 +309,13 @@ function nice(v) {
 }
 const quantile = (sorted, q) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
 function computeScales() {
-  const capita = state.measure === 'capita', shown = coloredItems().filter(i => passes(i.amounts, i.pop));
+  const capita = perResidents(), shown = coloredItems().filter(i => passes(i.amounts, i.pop));
   const weights = shown.map(i => capita ? i.pop || 0 : i.amounts[0][0] + i.amounts[1][0]).filter(w => w > 0).sort((a, b) => a - b);
   state.fade = weights.length > 4 ? {lo: quantile(weights, .1), hi: quantile(weights, .75)} : null;
   if (state.measure === 'lead') { state.breaks = []; return; }
   let list = [];
-  const add = (i) => { const total = i.amounts[0][0] + i.amounts[1][0]; if (total > 0 && (!capita || i.pop)) list.push(capita ? 100 * total / i.pop : total); };
-  if (state.timeline) {
+  const add = (i) => { const total = i.amounts[0][0] + i.amounts[1][0]; if (total > 0 && (!capita || i.pop)) list.push(capita ? PER() * total / i.pop : total); };
+  if (state.timeline && !maxMode()) {
     const saved = state.timeIndex, indexes = state.timeMode === 'month' ? state.months.map((m, i) => i) : [state.months.length - 1];
     for (const i of indexes) { state.timeIndex = i; stateItems().filter(x => passes(x.amounts, x.pop)).forEach(add); }
     state.timeIndex = saved;
@@ -290,8 +324,9 @@ function computeScales() {
   const cuts = [.2, .4, .6, .8].map(q => nice(quantile(list, q) || 0));
   state.breaks = cuts.filter((v, i) => v > 0 && v > (cuts[i - 1] || 0));
 }
-function tooltip(level, title, amounts, pop, extra = '') {
-  const [a, b] = amounts, total = a[0] + b[0], estimated = level !== 'zcta' && level !== 'state';
+// lookup(kind) -> [first, second] amounts, so the tooltip can show dollars and max-out donors in any mode.
+function tooltip(level, title, lookup, pop, extra = '') {
+  const [a, b] = lookup('dollars'), total = a[0] + b[0], area = level !== 'zcta' && level !== 'state';
   const lines = [`<div class="tooltip-title">${title}</div>`];
   if (!total) lines.push('<div class="tooltip-sub">No itemized receipts from here for either candidate</div>');
   else {
@@ -300,11 +335,28 @@ function tooltip(level, title, amounts, pop, extra = '') {
     lines.push(`<div><span class="dot" style="background:${hues[state.first]}"></span>${names[state.first]} ${money(a[0])} (${pct(a[0])})<span class="tooltip-sub">${avg(a)}</span></div>`,
       `<div><span class="dot" style="background:${hues[state.second]}"></span>${names[state.second]} ${money(b[0])} (${pct(b[0])})<span class="tooltip-sub">${avg(b)}</span></div>`);
     const count = a[2] + b[2];
-    lines.push(`<div class="tooltip-sub">${estimated ? '≈' + count.toLocaleString('en-US', {maximumFractionDigits: 1}) + ' contributions (estimated)' : count.toLocaleString() + ' itemized contributions'}</div>`);
-    if (pop) lines.push(`<div class="tooltip-sub">${money(100 * total / pop)} per 100 residents · pop. ${pop.toLocaleString()}</div>`);
-    const {s, kind} = classify(amounts, pop, passes(amounts, pop));
+    if (!area) lines.push(`<div class="tooltip-sub">${count.toLocaleString()} itemized contributions</div>`);
+    else {
+      // Contributions placed by street address are exact; only the rest of each ZIP's total is an estimate.
+      const placed = a[4] + b[4], rest = Math.max(0, count - placed), share = (a[3] + b[3]) / total;
+      lines.push(`<div class="tooltip-sub">${placed.toLocaleString()} contributions placed by street address` +
+        (rest >= .05 ? ` + ≈${rest.toFixed(1)} estimated from ZIP` : '') + '</div>');
+      if (share < .995) lines.push(`<div class="tooltip-sub">${Math.round(100 * share)}% of dollars placed by address · ${Math.round(100 * (1 - share))}% estimated</div>`);
+    }
+    if (pop && !maxMode()) lines.push(`<div class="tooltip-sub">${money(100 * total / pop)} per 100 residents · pop. ${pop.toLocaleString()}</div>`);
+  }
+  const [x, y] = lookup('max');
+  if (state.maxLoaded && x[0] + y[0] + x[3] + y[3] > 0) {
+    const line = (c, v) => v[0] + v[3] > 0 ? `<div class="tooltip-sub"><span class="dot" style="background:${hues[c]}"></span>${names[c]}: ${donors(v[0])} ` +
+      `(${donors(v[1])} in one gift, ${donors(v[2])} accumulated)${v[3] >= .005 ? ` · ${donors(v[3])} gift${v[3] === 1 ? '' : 's'} over the limit` : ''}</div>` : '';
+    lines.push(`<div class="tooltip-sub tooltip-head">Max-out donors · ${electionLabel()}</div>`, line(state.first, x), line(state.second, y));
+    if (pop && maxMode()) lines.push(`<div class="tooltip-sub">${+(PER() * (x[0] + y[0]) / pop).toPrecision(2)} per 10,000 residents · pop. ${pop.toLocaleString()}</div>`);
+  } else if (maxMode()) lines.push(`<div class="tooltip-sub">No max-out donors here for either candidate (${electionLabel()})</div>`);
+  const shade = lookup(kindNow());
+  if (shade[0][0] + shade[1][0] > 0) {
+    const {s, kind} = classify(shade, pop, passes(shade, pop));
     if (kind === 'out') lines.push('<div class="tooltip-sub">Outside the filter range</div>');
-    else if (s != null && s < .5 && state.measure !== 'volume') lines.push(`<div class="tooltip-sub">Shown paler: ${state.measure === 'capita' ? 'few residents' : 'few dollars'} compared with the places shown</div>`);
+    else if (s != null && s < .5 && state.measure !== 'volume' && state.measure !== 'maxouts') lines.push(`<div class="tooltip-sub">Shown paler: ${perResidents() ? 'few residents' : 'few dollars'} compared with the places shown</div>`);
   }
   return lines.join('') + extra;
 }
@@ -312,11 +364,11 @@ function stateTooltip(code) {
   let note = '', title = state.statesByCode[code];
   if (state.timeline) title += ` · ${state.timeMode === 'month' ? '' : 'through '}${monthLabel(timeMonth())}`;
   else if (state.level !== 'zcta' && state.selected.length) {
-    const [x, y] = comparison(state.unallocated, state.level + '|' + code);
+    const [x, y] = comparison(state.unallocated, state.level + '|' + code, 'dollars');
     if (x[0] + y[0] >= .5) note = `<div class="tooltip-sub">${money(x[0] + y[0])} from ZIPs with no mappable ${levels[state.level].noun}</div>`;
   }
   if (!state.timeline && !state.nationwide && !state.selected.includes(code)) note += `<div class="tooltip-hint">Click to open ${levels[state.level].label} · Shift-click to add</div>`;
-  return tooltip('state', title, stateAmounts(code), population('state', code), note);
+  return tooltip('state', title, (kind) => stateAmounts(code, kind), population('state', code), note);
 }
 function showError(error) {
   $('error').textContent = error.message || String(error);
@@ -377,15 +429,22 @@ async function loadLevel(level) {
       .catch(error => { state.receiptsLoaded = null; throw error; });
     jobs.push(state.receiptsLoaded);
   }
-  if (level !== 'zcta' && !state.areas[level]) jobs.push(file(`data/levels/${level}.csv`).then(text => {
-    const areas = new Map();
-    addRows(csv(text), areas, row => row.geoid + '|' + row.candidate);
+  // Area dollars, then their max-out donor counts (optional: older deploys have no max-out files).
+  const once = (name, load) => (state.levelLoads[name] ||= load().catch(error => { delete state.levelLoads[name]; throw error; }));
+  const optional = (url, apply) => file(url).then(text => apply(csv(text)), () => {});
+  if (level !== 'zcta') jobs.push(once(level, async () => {
+    const areas = new Map(), key = row => row.geoid + '|' + row.candidate;
+    addRows(csv(await file(`data/levels/${level}.csv`)), areas, key);
+    await optional(`data/levels/maxouts_${level}.csv`, rows => addMaxouts(rows, areas, key));
     state.areas[level] = areas;
   }));
-  if (level !== 'zcta' && !state.unallocated.size) jobs.push(file('data/levels/unallocated.csv').then(text =>
-    addRows(csv(text), state.unallocated, row => row.level + '|' + row.state + '|' + row.candidate)));
+  if (level !== 'zcta') jobs.push(once('unallocated', async () => {
+    const key = row => row.level + '|' + row.state + '|' + row.candidate;
+    addRows(csv(await file('data/levels/unallocated.csv')), state.unallocated, key);
+    await optional('data/levels/maxouts_unallocated.csv', rows => addMaxouts(rows, state.unallocated, key));
+  }));
   // Population feeds per-resident shading, the rankings and the filter.
-  if (state.measure === 'capita' || !$('rank').hidden || filterOn()) jobs.push(loadPopulation(level), loadPopulation('state'));
+  if (perResidents() || !$('rank').hidden || filterOn()) jobs.push(loadPopulation(level), loadPopulation('state'));
   await Promise.all(jobs);
 }
 
@@ -432,7 +491,7 @@ async function render(fit = false) {
         state.index.set(areaKey(level, feature).key, polygon);
         polygon.bindTooltip(() => {
           const {store, key, pop} = areaKey(level, feature);
-          return tooltip(level, areaTitle(level, feature), comparison(store, key), population(level, pop));
+          return tooltip(level, areaTitle(level, feature), (kind) => comparison(store, key, kind), population(level, pop));
         }, {sticky: true, direction: 'top'});
         // A single click focuses an area (or opens its state in nationwide view).
         let single;
@@ -613,7 +672,7 @@ function updateLegend() {
   const level = coloredLevel(), label = levels[level].label;
   const swatches = (colors) => colors.map(c => `<span style="background:${c}"></span>`).join('');
   const empty = `<span class="swatch" style="background:${EMPTY}"></span>`;
-  const noneNote = `<button class="empty-toggle" id="empty-toggle" role="switch" aria-checked="${state.showEmpty}">${empty}No receipts<i></i></button>`;
+  const noneNote = `<button class="empty-toggle" id="empty-toggle" role="switch" aria-checked="${state.showEmpty}">${empty}${maxMode() ? 'No max-out donors' : 'No receipts'}<i></i></button>`;
   const fadeRow = (color, what, format) => state.fade ? `<div class="fade-row"><span class="fade" style="background:linear-gradient(90deg,${faded(color, 0)},${color})"></span>` +
     `<div class="ticks ends"><span>${format(state.fade.lo)} or less</span><span>${format(state.fade.hi)}+ ${what}</span></div></div>` : '';
   let html;
@@ -623,14 +682,17 @@ function updateLegend() {
       `<div class="ticks ends"><span>← ${names[state.second]} led</span><span>${names[state.first]} led →</span></div>` +
       fadeRow(hues[state.first], 'combined', short) + '<div class="legend-note">Paler = fewer dollars behind the lead</div>' + noneNote;
   } else {
-    const capita = state.measure === 'capita', breaks = state.breaks, format = stats[capita ? 'capita' : 'total'].format;
-    html = `<div class="legend-title">${capita ? 'Dollars per 100 residents' : 'Total raised'} · ${names[state.first]} + ${names[state.second]}</div>` +
+    const capita = perResidents(), breaks = state.breaks, format = stats[capita ? 'capita' : 'total'].format;
+    const what = maxMode() ? `Max-out donors${capita ? ' per 10,000 residents' : ''} · ${electionLabel()}` : capita ? 'Dollars per 100 residents' : 'Total raised';
+    html = `<div class="legend-title">${what} · ${names[state.first]} + ${names[state.second]}</div>` +
       `<div class="steps">${swatches(ramp.slice(0, breaks.length + 1))}</div><div class="ticks">${breaks.map(b => `<span>${format(b)}</span>`).join('')}</div>` +
       `<div class="legend-note">Each color holds about a fifth of the ${label} shown</div>` +
       (capita ? fadeRow(ramp[3], 'residents', people) + '<div class="legend-note">Paler = fewer residents, a less stable rate</div>' : '') + noneNote;
   }
   if (filterOn()) html += `<div class="legend-note filter-note">Filter on: faint places are outside the range</div>`;
-  if (level !== 'zcta' && level !== 'state') html += '<div class="legend-note">Area amounts are estimates apportioned from ZIPs</div>';
+  if (maxMode()) html += `<div class="legend-note">Donors who gave a candidate ${money((state.coverage?.maxouts?.limit_cents ?? 350000) / 100)} or more for one election, placed at their latest contribution</div>`;
+  const placed = state.coverage?.placement?.[level];
+  if (placed) html += `<div class="legend-note">${Math.round(100 * placed.address_cents / placed.matched_cents)}% of ${levels[level].noun} dollars placed by street address; the rest estimated from ZIP</div>`;
   $('legend').innerHTML = html;
   fitLegend();
 }
@@ -707,7 +769,7 @@ function bindChart(node, lines, onPick) {
 /* Totals panel: selected states (or the US), period totals, and monthly receipts */
 function summary(codes, title, removable, code, W, H) {
   const rows = order.map(c => {
-    const v = codes.reduce((sum, s) => sum.map((n, i) => n + values(state.totals, s + '|' + c)[i]), [0, 0, 0]);
+    const v = codes.reduce((sum, s) => sum.map((n, i) => n + values(state.totals, s + '|' + c, 'dollars')[i]), [0, 0, 0]);
     return `<tr><td><span class="dot" style="background:${hues[c]}"></span>${names[c]}</td><td>${money(v[0])}</td><td class="muted-cell">${v[2] ? 'avg ' + money(v[0] / v[2]) : ''}</td></tr>`;
   }).join('');
   const chart = state.monthly ? lineChart(series(codes), W, H) : '<p class="muted">Monthly totals appear after the next data refresh.</p>';
@@ -741,13 +803,18 @@ function updatePanel() {
 }
 
 /* Top places panel: choose the level and how to sort; hover highlights, click zooms. */
+// kind: which amounts a ranking reads (dollars, or max-out donors for the selected election).
 const rankMeasures = {
-  total: {label: () => 'Total raised', value: stats.total.value, format: money},
-  capita: {label: () => 'Per 100 residents', value: stats.capita.value, format: (v) => '$' + v.toFixed(2)},
-  first: {label: () => `${names[state.first]}'s share`, value: stats.share.value, format: stats.share.format},
-  second: {label: () => `${names[state.second]}'s share`, value: (a, b) => a[0] + b[0] > 0 ? b[0] / (a[0] + b[0]) : null, format: stats.share.format},
-  avg: {label: () => 'Average contribution', value: stats.avg.value, format: money},
-  count: {label: () => 'Contributions', value: stats.count.value, format: (v) => Math.round(v).toLocaleString()},
+  total: {kind: 'dollars', label: () => 'Total raised', value: (a, b) => a[0] + b[0], format: money},
+  capita: {kind: 'dollars', label: () => 'Per 100 residents', value: (a, b, pop) => pop ? 100 * (a[0] + b[0]) / pop : null, format: (v) => '$' + v.toFixed(2)},
+  first: {kind: 'dollars', label: () => `${names[state.first]}'s share`, value: stats.share.value, format: stats.share.format},
+  second: {kind: 'dollars', label: () => `${names[state.second]}'s share`, value: (a, b) => a[0] + b[0] > 0 ? b[0] / (a[0] + b[0]) : null, format: stats.share.format},
+  avg: {kind: 'dollars', label: () => 'Average contribution', value: (a, b) => a[2] + b[2] > 0 ? (a[0] + b[0]) / (a[2] + b[2]) : null, format: money},
+  count: {kind: 'dollars', label: () => 'Contributions', value: (a, b) => a[2] + b[2], format: (v) => Math.round(v).toLocaleString()},
+  maxouts: {kind: 'max', label: () => `Max-out donors (${electionLabel()})`, value: (a, b) => a[0] + b[0] || null, format: donors},
+  maxcapita: {kind: 'max', label: () => 'Max-out donors per 10,000 residents', value: (a, b, pop) => pop && a[0] + b[0] ? 10000 * (a[0] + b[0]) / pop : null, format: (v) => +v.toPrecision(2) + ''},
+  maxsingle: {kind: 'max', label: () => 'Maxed out in one gift', value: (a, b) => a[1] + b[1] || null, format: donors},
+  maxaccum: {kind: 'max', label: () => 'Maxed out over several gifts', value: (a, b) => a[2] + b[2] || null, format: donors},
 };
 function updateRank() {
   if ($('rank').hidden || !state.statesByCode) return;
@@ -763,11 +830,13 @@ function updateRank() {
     $('rank-note').textContent = '';
     return;
   }
-  const items = rankLevel === 'state' ? stateItems() : areaItems(), filtered = coloredLevel() === rankLevel;
   const measure = rankMeasures[state.rankBy], rows = [];
+  // The filter applies when ranking the colored level with the amounts it is colored by.
+  const items = rankLevel === 'state' ? stateItems(measure.kind) : areaItems(measure.kind), filtered = coloredLevel() === rankLevel && measure.kind === kindNow();
   for (const item of items) {
     if (item.amounts[0][0] + item.amounts[1][0] <= 0 || (filtered && !passes(item.amounts, item.pop))) continue;
     const value = measure.value(...item.amounts, item.pop);
+    // Ties go to more dollars (or more max-out donors).
     if (value != null) rows.push({...item, value, total: item.amounts[0][0] + item.amounts[1][0]});
   }
   // Ties (such as many places at 100% share) go to the place with more dollars.
@@ -779,7 +848,7 @@ function updateRank() {
     return `<li data-key="${r.key}" data-state="${r.isState ? 1 : ''}" tabindex="0"><span class="rank-n">${i + 1}</span><span class="rank-name">${r.name}</span><span class="rank-value">${measure.format(r.value)}</span>
       <span class="rank-bar" style="width:${Math.max(3, 100 * r.value / max)}%"><i style="flex:${a[0]};background:${hues[state.first]}"></i><i style="flex:${b[0]};background:${hues[state.second]}"></i></span></li>`;
   }).join('') : '<li class="muted">Nothing to rank here.</li>';
-  $('rank-note').textContent = `${rows.length.toLocaleString()} ${levels[rankLevel].label} with receipts${state.nationwide && levels[rankLevel].detail ? ' in the visible states' : ''}${filtered && filterOn() ? ' inside the filter' : ''} · bar length follows the ranking, split ${names[state.first]} / ${names[state.second]}. Use Filter to set minimums (for example, dollars behind a share).`;
+  $('rank-note').textContent = `${rows.length.toLocaleString()} ${levels[rankLevel].label} with ${measure.kind === 'max' ? 'max-out donors' : 'receipts'}${state.nationwide && levels[rankLevel].detail ? ' in the visible states' : ''}${filtered && filterOn() ? ' inside the filter' : ''} · bar length follows the ranking, split ${names[state.first]} / ${names[state.second]}. Use Filter to set minimums (for example, dollars behind a share).`;
 }
 function highlight(key, on) {
   const polygon = state.index.get(key);
@@ -790,7 +859,7 @@ function highlight(key, on) {
 
 /* Filter panel: histogram and min/max range for a statistic of the places shown. */
 const SLIDER = 1000;
-function filterScope() { return coloredLevel() + '|' + (state.nationwide ? 'US' : state.selected.join(',')) + '|' + state.span.join('-') + '|' + state.first + '|' + state.second; }
+function filterScope() { return coloredLevel() + '|' + (state.nationwide ? 'US' : state.selected.join(',')) + '|' + state.span.join('-') + '|' + state.first + '|' + state.second + '|' + kindNow() + '|' + state.election; }
 function filterExtent(list, stat) {
   const vals = list.filter(v => v != null && (!stat.log || v > 0));
   if (!vals.length) return null;
@@ -850,7 +919,7 @@ function updateDonors() {
   const codes = [...new Set([...state.totals.keys()].map(k => k.split('|')[0]))];
   $('donors-period').textContent = periodLabel();
   $('donors-body').innerHTML = order.map(c => {
-    const byState = codes.map(code => [code, values(state.totals, code + '|' + c)]).filter(([, v]) => v[0] > 0);
+    const byState = codes.map(code => [code, values(state.totals, code + '|' + c, 'dollars')]).filter(([, v]) => v[0] > 0);
     const total = byState.reduce((s, [, v]) => s + v[0], 0), count = byState.reduce((s, [, v]) => s + v[2], 0);
     if (!total) return `<section class="card"><h2><span class="dot" style="background:${hues[c]}"></span>${names[c]}</h2><p class="muted">No itemized receipts in this period.</p></section>`;
     const tx = byState.find(([code]) => code === 'TX')?.[1][0] || 0, top = byState.sort((p, q) => q[1][0] - p[1][0]).slice(0, 6);
@@ -877,7 +946,7 @@ function updateTimeline() {
   const box = $('time-chart'), W = Math.max(240, box.clientWidth || 300);
   box.innerHTML = lineChart(lines, W, Math.round(Math.max(110, Math.min(260, W * .38))), {marker: state.timeIndex, band: false});
   bindChart(box, lines, (i) => { play(false); state.timeIndex = i; timelineChanged(); });
-  const at = order.map(c => [c, all.reduce((s, code) => s + stateValues(code, c)[0], 0)]), max = Math.max(1, ...at.map(([, v]) => v));
+  const at = order.map(c => [c, all.reduce((s, code) => s + stateValues(code, c, 'dollars')[0], 0)]), max = Math.max(1, ...at.map(([, v]) => v));
   $('time-board').innerHTML = at.sort((p, q) => q[1] - p[1]).map(([c, v]) => `<li><span><span class="dot" style="background:${hues[c]}"></span>${names[c]}</span>
     <span class="bar"><i style="width:${100 * v / max}%;background:${hues[c]}"></i></span><span>${short(v)}</span></li>`).join('');
 }
@@ -992,6 +1061,14 @@ async function start() {
     label.append(input, `${name} (${code})`);
     $('state-options').append(label);
   }
+  // Max-out donors by reported state and ZIP (small); states are sums of their ZIP rows.
+  state.maxLoaded = file('data/maxouts.csv').then(text => {
+    const rows = csv(text);
+    addMaxouts(rows, state.totals, row => row.state + '|' + row.candidate);
+    addMaxouts(rows.filter(row => row.zip), state.receipts, row => row.state + '|' + row.zip + '|' + row.candidate);
+    refresh();
+    return true;
+  }).catch(() => { state.maxLoaded = null; $('measure').querySelectorAll('[value^=max]').forEach(o => { o.disabled = true; }); });
   file('data/state_monthly.csv').then(text => {
     const rows = csv(text);
     state.monthly = new Map(rows.map(r => [r.state + '|' + r.candidate + '|' + r.month, [Number(r.positive_cents) / 100, Number(r.net_cents) / 100, Number(r.count)]]));
@@ -1016,6 +1093,9 @@ async function start() {
     }
   }).addTo(map);
   $('coverage').textContent = `FEC through ${coverage.coverage_end} · ${coverage.filing_count} filings`;
+  if (coverage.placement) $('about-placement').textContent = 'Placed by address: ' + Object.entries(coverage.placement)
+    .map(([level, p]) => `${levels[level].label} ${Math.round(100 * p.address_cents / p.matched_cents)}%`).join(', ') + ' of dollars.';
+  syncMeasure();
   if (window.innerWidth <= 850) { $('side').classList.add('collapsed'); $('side-toggle').setAttribute('aria-expanded', 'false'); }
   for (const id of PANELS) floating($(id));
   syncCandidates();
@@ -1037,11 +1117,19 @@ function periodInput(which) {
 }
 $('period-lo').addEventListener('input', () => periodInput('lo'));
 $('period-hi').addEventListener('input', () => periodInput('hi'));
+// Max-out measures count donors per election, so the Period slider gives way to an Election choice.
+function syncMeasure() {
+  $('election-control').hidden = !maxMode();
+  $('period-control').classList.toggle('inactive', maxMode());
+  $('period-control').title = maxMode() ? 'Max-out donors are counted per election; choose the election instead' : '';
+}
 $('measure').addEventListener('change', async e => {
   state.measure = e.target.value;
+  syncMeasure();
   try { await loadLevel(state.level); } catch (error) { showError(error); }
   refresh();
 });
+$('election').addEventListener('change', e => { state.election = e.target.value; refresh(); });
 $('geography').addEventListener('change', e => {
   if (e.target.value === 'choose') { syncControls(); openStateMenu(); }
   else if (e.target.value === 'overview') resetView();

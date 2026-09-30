@@ -2,6 +2,11 @@
 
 No individual donor records are committed. Report totals must reconcile before
 any public file is replaced. Set FEC_API_KEY in GitHub Actions for API access.
+
+Contributor names and street addresses are read into memory only: addresses are
+geocoded (scripts/geocode.py, cache kept outside git) to place each contribution in
+its county, congressional district, CBSA and county subdivision, and names form the
+donor keys for the max-out counts (scripts/maxouts.py). Only aggregates are written.
 """
 
 import csv
@@ -19,6 +24,10 @@ from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
+import geocode
+import maxouts
+from placement import Placer
+
 CANDIDATES = {"C00919084": "James Talarico", "C00369033": "John Cornyn", "C00901918": "Ken Paxton"}
 PHASES = ("pre_primary", "between_primary_runoff", "post_runoff")
 HEADER = ("state", "zip", "candidate", "phase", "positive_cents", "net_cents", "count")
@@ -27,7 +36,8 @@ START = date(2025, 1, 1)
 # Map level -> (HUD crosswalk CSV, pattern a mappable geoid must match).
 LEVELS = {"county": ("ZIP-COUNTY.csv", r"\d{5}"), "cd": ("ZIP-CD.csv", r"\d{4}"),
           "cbsa": ("ZIP-CBSA.csv", r"(?!99999)\d{5}"), "cousub": ("ZIP-COUNTY-SUB.csv", r"\d{10}")}
-LEVEL_HEADER = ("geoid", "candidate", "phase", "positive_cents", "net_cents", "count")
+LEVEL_HEADER = ("geoid", "candidate", "phase", "positive_cents", "net_cents", "count", "address_cents", "address_count")
+MAXOUT_HEADER = ("state", "zip", "candidate", "election", "single_gift", "accumulated", "over_limit_contributions")
 UNALLOCATED_HEADER = ("level", "state", "candidate", "phase", "positive_cents", "net_cents", "count")
 CD_VINTAGE = "119th Congress districts (Census cb_2024_us_cd119_500k), as used by the HUD 06/2026 ZIP-CD crosswalk"
 
@@ -78,7 +88,14 @@ def cents(value):
     return int((Decimal(str(value)) * 100).quantize(Decimal("1")))
 
 
-def parse_report(report, committee, data, states, transaction_ids, months):
+def optional_cents(value):
+    try:
+        return cents(value) if value.strip() else None
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def parse_report(report, committee, data, states, transaction_ids, months, contributions=None):
     file_number = report["file_number"]
     expected = cents(report["individual_itemized_contributions_period"])
     url = report["csv_url"]
@@ -121,6 +138,16 @@ def parse_report(report, committee, data, states, transaction_ids, months):
             if not re.fullmatch(r"[A-Z]{2}", state):
                 continue
             zip5 = row[16].strip()[:5]
+            if contributions is not None:
+                # FEC v8 Schedule A: 7-11 name parts, 12-13 street, 14 city, 15 state, 16 ZIP,
+                # 17 election code, 18 election description, 21 election-to-date aggregate.
+                contributions.append({
+                    "committee": committee, "tid": transaction_id, "state": state,
+                    "zip": zip5 if re.fullmatch(r"\d{5}", zip5) else "", "phase": phase, "day": day,
+                    "amount": amount, "address": geocode.normalize(row[12], row[13], row[14], state, zip5),
+                    "coded": maxouts.coded_election(row[17], row[18]),
+                    "key": maxouts.donor_key(row[7], row[8], zip5), "aggregate": optional_cents(row[21]),
+                    "period_end": report["coverage_end_date"][:10]})
             for bucket in (states[state, committee, phase], months[state, committee, day.strftime("%Y-%m")]):
                 bucket[0] += max(0, amount)
                 bucket[1] += amount
@@ -178,12 +205,23 @@ def split(amount, weights):
     return shares
 
 
-def allocate_levels(receipts_csv, crosswalks, out):
-    """Apportion ZIP receipts to each HUD crosswalk geography and write data/levels/*.csv.
+def place(contributions, placer):
+    """Attach each contribution's map areas: {level: geoid, "" (no CBSA), or None (use the ZIP split)}."""
+    for c in contributions:
+        block = c.get("block")
+        c["areas"] = placer.areas(block) if block else {}
 
-    Counts are split in hundredths, so they are written with two decimals.
-    Placeholder geoids (containing '*', CBSA 99999, malformed codes) keep their
-    dollars in levels/unallocated.csv by reported state.
+
+def allocate_levels(receipts_csv, crosswalks, out, contributions=None):
+    """Write data/levels/{level}.csv and unallocated.csv; return placement stats per level.
+
+    Contributions placed by geocoded address go whole to their area (address_cents and
+    address_count record their positive dollars and whole count). The rest of each ZIP's total is apportioned by the
+    HUD crosswalk, with counts split in hundredths, so counts have two decimals. Only
+    ZIPs in a crosswalk count toward a level, whether or not their addresses geocode,
+    so level totals are the same with or without placement. Placeholder geoids
+    (containing '*', CBSA 99999 or no CBSA, malformed codes) keep their dollars in
+    levels/unallocated.csv by reported state.
     """
     with receipts_csv.open(newline="") as f:
         receipts = [(row["state"], row["zip"], row["candidate"], row["phase"],
@@ -191,95 +229,224 @@ def allocate_levels(receipts_csv, crosswalks, out):
                     for row in csv.DictReader(f)]
     out.mkdir(parents=True, exist_ok=True)
     unallocated = defaultdict(lambda: [0, 0, 0])
+    stats = {}
     for level, (filename, pattern) in LEVELS.items():
         crosswalk = load_crosswalk(crosswalks / filename)
-        totals = defaultdict(lambda: [0, 0, 0])
-        matched = 0
+        placed = defaultdict(list)
+        for c in contributions or ():
+            geoid = c["areas"].get(level)
+            if geoid is not None and c["zip"]:
+                placed[c["state"], c["zip"], c["committee"], c["phase"]].append(
+                    (geoid, max(0, c["amount"]), c["amount"], 100 if c["amount"] > 0 else 0))
+        # positive, net, count x100, then the positive cents and count placed by address
+        totals = defaultdict(lambda: [0, 0, 0, 0, 0])
+        matched = by_address = 0
         for state, zip5, candidate, phase, *values in receipts:
             parts = crosswalk.get(zip5)
             if not parts:
                 continue
             matched += values[0]
-            splits = [split(value, [weight for _, weight in parts]) for value in values]
+            rest = list(values)
+            for geoid, *amounts in placed.get((state, zip5, candidate, phase), ()):
+                known = bool(geoid) and re.fullmatch(pattern, geoid)
+                bucket = totals[geoid, candidate, phase] if known else unallocated[level, state, candidate, phase]
+                for i in range(3):
+                    bucket[i] += amounts[i]
+                    rest[i] -= amounts[i]
+                if known:
+                    bucket[3] += amounts[0]
+                    bucket[4] += amounts[2] // 100
+                by_address += amounts[0]
+            splits = [split(value, [weight for _, weight in parts]) for value in rest]
             for index, (geoid, _) in enumerate(parts):
                 bucket = totals[geoid, candidate, phase] if re.fullmatch(pattern, geoid) else unallocated[level, state, candidate, phase]
                 for i in range(3):
                     bucket[i] += splits[i][index]
-        placed = sum(value[0] for value in totals.values())
+        mapped = sum(value[0] for value in totals.values())
         dropped = sum(value[0] for key, value in unallocated.items() if key[0] == level)
-        if placed + dropped != matched:
-            raise RuntimeError(f"{level} allocation does not reconcile: {placed} + {dropped} vs {matched} cents")
+        if mapped + dropped != matched:
+            raise RuntimeError(f"{level} allocation does not reconcile: {mapped} + {dropped} vs {matched} cents")
         with (out / f"{level}.csv").open("w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(LEVEL_HEADER)
-            writer.writerows((*key, value[0], value[1], f"{value[2] / 100:.2f}")
+            writer.writerows((*key, value[0], value[1], f"{value[2] / 100:.2f}", value[3], value[4])
                              for key, value in sorted(totals.items()) if any(value))
-        print(level, len(totals), "areas;", placed, "of", matched, "matched cents mapped", flush=True)
+        stats[level] = {"matched_cents": matched, "address_cents": by_address,
+                        "mapped_address_cents": sum(value[3] for value in totals.values()), "unallocated_cents": dropped}
+        print(level, len(totals), "areas;", mapped, "of", matched, "matched cents mapped;",
+              by_address, "placed by address", flush=True)
     with (out / "unallocated.csv").open("w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(UNALLOCATED_HEADER)
         writer.writerows((*key, value[0], value[1], f"{value[2] / 100:.2f}")
                          for key, value in sorted(unallocated.items()) if any(value))
+    return stats
+
+
+def write_maxouts(contributions, crosswalks, out):
+    """Count donors who reached the limit; write maxouts.csv and levels/maxouts_*.csv. Returns a summary.
+
+    Each max-out donor-election is placed where its most recent contribution for that
+    election was: reported state and ZIP for maxouts.csv, and the geocoded address (or
+    the ZIP's HUD split, in hundredths of a donor) for each level.
+    """
+    runoffs = maxouts.runoff_committees(contributions)
+    groups = maxouts.donor_groups(contributions, runoffs)
+    by_zip = defaultdict(lambda: [0, 0, 0])
+    by_level = {level: defaultdict(lambda: [0, 0, 0]) for level in LEVELS}
+    unallocated = defaultdict(lambda: [0, 0, 0])
+    summary = defaultdict(lambda: [0, 0, 0])
+    net_below = defaultdict(int)
+    crosswalk = {level: load_crosswalk(crosswalks / filename) for level, (filename, _) in LEVELS.items()}
+    for (committee, election, _), rows in groups.items():
+        kind, over = maxouts.maxout(rows)
+        if kind is None and not over:
+            continue
+        counts = [kind == "single_gift", kind == "accumulated", over]
+        if kind and sum(c["amount"] for c in rows) < maxouts.LIMIT_CENTS:
+            net_below[committee] += 1  # reached the limit in positive receipts, but negative adjustments bring it under
+        last = rows[-1]
+        for i in range(3):
+            by_zip[last["state"], last["zip"], committee, election][i] += counts[i]
+            summary[committee, election][i] += counts[i]
+        for level, (_, pattern) in LEVELS.items():
+            geoid = last["areas"].get(level)
+            if geoid is not None:
+                parts = [(geoid, 1.0)]
+            elif last["zip"] in crosswalk[level]:
+                parts = crosswalk[level][last["zip"]]
+            else:
+                continue
+            splits = [split(value * 100, [weight for _, weight in parts]) for value in counts]
+            for index, (area, _) in enumerate(parts):
+                bucket = (by_level[level][area, committee, election] if area and re.fullmatch(pattern, area)
+                          else unallocated[level, last["state"], committee, election])
+                for i in range(3):
+                    bucket[i] += splits[i][index]
+    with (out / "maxouts.csv").open("w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(MAXOUT_HEADER)
+        writer.writerows((*key, *value) for key, value in sorted(by_zip.items()))
+    for level, values in by_level.items():
+        with (out / "levels" / f"maxouts_{level}.csv").open("w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(("geoid", *MAXOUT_HEADER[2:]))
+            writer.writerows((*key, *(f"{v / 100:.2f}" for v in value)) for key, value in sorted(values.items()) if any(value))
+    with (out / "levels" / "maxouts_unallocated.csv").open("w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(("level", "state", *MAXOUT_HEADER[2:]))
+        writer.writerows((*key, *(f"{v / 100:.2f}" for v in value))
+                         for key, value in sorted(unallocated.items()) if any(value))
+    check = maxouts.aggregate_check(groups)
+    print("max-out donors:", {f"{k[0]}|{k[1]}": v for k, v in sorted(summary.items())}, flush=True)
+    print("aggregate check:", check["agree"], "of", check["groups"], "donor-elections match column 21", flush=True)
+    return {"limit_cents": maxouts.LIMIT_CENTS, "limit_cycle": maxouts.LIMIT_CYCLE, "limit_source": maxouts.LIMIT_SOURCE,
+            "runoff_committees": sorted(runoffs),
+            "runoff_designated_without_runoff": {committee: sum(1 for c in contributions if c["committee"] == committee
+                                                                and c["coded"] == ("runoff", "2026"))
+                                                 for committee in CANDIDATES if committee not in runoffs},
+            "maxed_out_but_net_below_limit": dict(sorted(net_below.items())),
+            "totals": {f"{committee}|{election}": dict(zip(MAXOUT_HEADER[4:], value))
+                       for (committee, election), value in sorted(summary.items())},
+            "aggregate_check": {k: check[k] for k in ("groups", "agree", "disagree", "causes")}}
 
 
 LEVEL_FILES = [f"levels/{level}.csv" for level in LEVELS] + ["levels/unallocated.csv"]
+MAXOUT_FILES = ["maxouts.csv"] + [f"levels/maxouts_{level}.csv" for level in LEVELS] + ["levels/maxouts_unallocated.csv"]
 
 
-def publish(data, states, meta, filings, out, months=None):
+def geocode_contributions(contributions):
+    """Geocode unique addresses; set c["block"] (None when not placed). Returns match stats."""
+    found = geocode.geocode({c["address"] for c in contributions if c["address"]})
+    stats = defaultdict(lambda: [0, 0])  # candidate -> [positive cents by address, positive cents]
+    by_state = defaultdict(lambda: [0, 0])
+    for c in contributions:
+        c["block"] = found.get(c["address"]) or None if c["address"] else None
+        amount = max(0, c["amount"])
+        for bucket in (stats[c["committee"]], by_state[c["state"]]):
+            bucket[1] += amount
+            bucket[0] += amount if c["block"] else 0
+    pending = len({c["address"] for c in contributions if c["address"] and c["address"] not in found})
+    return {"benchmark": geocode.BENCHMARK, "vintage": geocode.VINTAGE, "pending_addresses": pending,
+            "addresses": len({c["address"] for c in contributions if c["address"]}),
+            "matched_addresses": sum(1 for v in found.values() if v),
+            "dollar_match_rate_by_candidate": {k: round(v[0] / v[1], 4) if v[1] else 0 for k, v in sorted(stats.items())},
+            "dollar_match_rate_by_state": {k: round(v[0] / v[1], 4) if v[1] else 0 for k, v in sorted(by_state.items())}}
+
+
+def publish(data, states, meta, filings, out, months=None, contributions=None):
     """Stage every output in a temp dir, then replace the tracked files.
 
-    months (state, candidate, YYYY-MM totals) needs receipt dates; seed.py has
-    none, so it leaves the existing state_monthly.csv in place.
+    months (state, candidate, YYYY-MM totals) needs receipt dates, and contributions
+    (the in-memory rows, for address placement and max-out counts) need the FEC
+    filings; seed.py has neither, so it leaves state_monthly.csv and the max-out files
+    alone and apportions every level by the HUD split.
     """
     meta = {**meta, "cd_vintage": CD_VINTAGE,
-            "levels": "ZIP totals apportioned by HUD USPS ZIP crosswalk residential address shares (06/2026)"}
+            "levels": "Contributions placed by geocoded address where possible; the rest of each ZIP's total "
+                      "apportioned by HUD USPS ZIP crosswalk residential address shares (06/2026)"}
     with tempfile.TemporaryDirectory() as temp:
         staged = Path(temp)
+        (staged / "levels").mkdir()
+        if contributions is not None:
+            meta["geocode"] = geocode_contributions(contributions)
+            place(contributions, Placer())
         write_data(staged, data, states, meta, filings, months)
-        allocate_levels(staged / "receipts.csv", out / "crosswalks", staged / "levels")
+        meta["placement"] = allocate_levels(staged / "receipts.csv", out / "crosswalks", staged / "levels", contributions)
+        files = ["receipts.csv", "state_totals.csv", "filings.json", *LEVEL_FILES]
+        if contributions is not None:
+            meta["maxouts"] = write_maxouts(contributions, out / "crosswalks", staged)
+            files += MAXOUT_FILES
+        if months is not None:
+            files.append("state_monthly.csv")
+        (staged / "coverage.json").write_text(json.dumps(meta, indent=2) + "\n")
+        files.append("coverage.json")
         (out / "levels").mkdir(exist_ok=True)
-        monthly = ["state_monthly.csv"] if months is not None else []
-        for filename in ("receipts.csv", "state_totals.csv", "coverage.json", "filings.json", *monthly, *LEVEL_FILES):
+        for filename in files:
             os.replace(staged / filename, out / filename)
 
 
-def rebuild_levels(out):
-    """Regenerate only data/levels/*.csv from the current receipts.csv (e.g. after a new HUD quarter)."""
-    with tempfile.TemporaryDirectory() as temp:
-        allocate_levels(out / "receipts.csv", out / "crosswalks", Path(temp))
-        (out / "levels").mkdir(exist_ok=True)
-        for filename in LEVEL_FILES:
-            os.replace(Path(temp) / filename.split("/")[1], out / filename)
+def needs_rebuild(out, inventories):
+    """True unless the filing inventory is unchanged and the last run finished everything."""
+    current = out / "filings.json"
+    if not current.exists() or json.loads(current.read_text()).get("committees") != signature(inventories):
+        return True
+    if not (out / "state_monthly.csv").exists() or not (out / "maxouts.csv").exists():
+        return True
+    # Addresses the geocoder did not answer last time were split by ZIP; try them again.
+    try:
+        coverage = json.loads((out / "coverage.json").read_text())
+    except (OSError, ValueError):
+        return True
+    return coverage.get("geocode", {}).get("pending_addresses", 1) > 0
 
 
 def main():
     out = Path(__file__).resolve().parents[1] / "data"
-    if "--levels-only" in sys.argv[1:]:
-        rebuild_levels(out)
-        return
+    # --rebuild (formerly --levels-only) re-reads every filing even if nothing changed,
+    # e.g. after a new HUD quarter or new lookups: placement needs the raw rows.
+    force = bool({"--rebuild", "--levels-only"} & set(sys.argv[1:]))
     key = os.environ.get("FEC_API_KEY") or "DEMO_KEY"
     inventories = inventory(key)
-    current = out / "filings.json"
-    # A missing state_monthly.csv forces one rebuild even if no filing changed.
-    if (current.exists() and (out / "state_monthly.csv").exists()
-            and json.loads(current.read_text()).get("committees") == signature(inventories)):
+    if not force and not needs_rebuild(out, inventories):
         print("FEC filing inventory unchanged")
         return
     data = defaultdict(lambda: [0, 0, 0])
     states = defaultdict(lambda: [0, 0, 0])
     months = defaultdict(lambda: [0, 0, 0])
+    contributions = []
     audit = []
     for committee, reports in inventories.items():
         ids = set()
         for report in sorted(reports, key=lambda r: r["file_number"]):
-            record = parse_report(report, committee, data, states, ids, months)
+            record = parse_report(report, committee, data, states, ids, months, contributions)
             audit.append(record)
             print(committee, record["file_number"], "reconciled", flush=True)
     meta = {"retrieved": datetime.now(timezone.utc).date().isoformat(), "coverage_start": START.isoformat(),
             "coverage_end": max(r["coverage_end"] for r in audit), "filing_count": len(audit),
             "source": "FEC electronic filings", "geography": "Reported contributor state and ZIP matched to 2020 Census ZCTA"}
     # Validate the entire new snapshot before replacing any tracked output.
-    publish(data, states, meta, {"committees": signature(inventories), "reports": audit}, out, months)
+    publish(data, states, meta, {"committees": signature(inventories), "reports": audit}, out, months, contributions)
     print("Published through", meta["coverage_end"])
 
 

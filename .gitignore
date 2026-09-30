@@ -9,3 +9,4 @@ states.zip
 *.dbf
 *.shx
 *.prj
+.cache/
