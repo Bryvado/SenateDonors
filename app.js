@@ -1291,6 +1291,8 @@ async function start() {
   $('coverage').textContent = `FEC through ${coverage.coverage_end} · ${coverage.filing_count} filings`;
   if (coverage.placement) $('about-placement').textContent = 'Placed by address: ' + Object.entries(coverage.placement)
     .map(([level, p]) => `${levels[level].label} ${Math.round(100 * p.address_cents / p.matched_cents)}%`).join(', ') + ' of dollars.';
+  const near = Object.values(coverage.maxouts?.near_limit || {}).reduce((a, b) => a + b, 0);
+  if (near) $('about-near').textContent = `; ${near.toLocaleString()} donor-elections have itemized totals between $3,300 and $3,499.99`;
   syncMeasure();
   if (window.innerWidth <= 850) { $('side').classList.add('collapsed'); $('side-toggle').setAttribute('aria-expanded', 'false'); }
   for (const id of PANELS) floating($(id));

@@ -19,6 +19,13 @@ ELECTIONS = ("primary", "runoff", "general")
 # 2026 Texas election dates: an undesignated contribution counts toward the next
 # election after its date (11 CFR 110.1(b)(2)(ii)).
 ELECTION_DAYS = {"primary": date(2026, 3, 3), "runoff": date(2026, 5, 26), "general": date(2026, 11, 3)}
+# Memo text of rows that move part of a gift to another election (redesignation) or to another
+# person, usually a spouse (reattribution): "REDESIGNATION TO GENERAL", "REATTRIBUTION FROM SPOUSE",
+# "* Contribution Redesignated to General". Bare pointers such as "SEE REDESIGNATION" do not match.
+ADJUSTMENT = re.compile(r"\b(REDESIGNATION|REATTRIBUTION)\s+(TO|FROM)\b|\b(REDESIGNATED|REATTRIBUTED)\b", re.I)
+# Itemized totals this close to the limit could reach it with unitemized receipts (FEC itemizes a
+# donor's receipts only past $200 per cycle), so max-out counts are a floor.
+NEAR_LIMIT_CENTS = LIMIT_CENTS - 20_000
 SUFFIXES = {"JR", "SR", "II", "III", "IV", "V", "MD", "PHD", "ESQ", "DDS", "DVM"}
 
 
@@ -49,7 +56,7 @@ def runoff_committees(contributions):
     those alone do not show a runoff happened.
     """
     return {c["committee"] for c in contributions
-            if c["coded"] == ("runoff", "2026") and c["day"] > ELECTION_DAYS["primary"]}
+            if not c.get("adjust") and c["coded"] == ("runoff", "2026") and c["day"] > ELECTION_DAYS["primary"]}
 
 
 def resolve(contribution, runoffs):
@@ -79,9 +86,31 @@ def donor_key(last, first, zip5):
 
 
 def donor_groups(contributions, runoffs):
-    """{(committee, election, key): [contributions sorted by date, transaction id]}."""
+    """{(committee, election, key): [contributions sorted by date, transaction id]}.
+
+    Redesignation and reattribution memo rows (c["adjust"]) join the group of their own donor
+    and election, unless they point back to a gift that is not itself counted (a memo copy of
+    a conduit or joint-fundraising gift).
+    """
+    counted = {(c["committee"], c["tid"]) for c in contributions if not c.get("adjust")}
+    # Some filers chain adjustments (the "to general" row points at the "from runoff" row), so an
+    # adjustment is kept when its back-references lead to a counted receipt or to an adjustment
+    # with no back-reference.
+    adjustments = {(c["committee"], c["tid"]): c for c in contributions if c.get("adjust")}
+
+    def kept(c, depth=0):
+        if not c["parent"]:
+            return True
+        key = (c["committee"], c["parent"])
+        if key in counted:
+            return True
+        parent = adjustments.get(key)
+        return bool(parent) and parent is not c and depth < 5 and kept(parent, depth + 1)
+
     groups = defaultdict(list)
     for c in contributions:
+        if c.get("adjust") and not kept(c):
+            continue
         election = resolve(c, runoffs)
         if election is None:
             continue
@@ -92,13 +121,44 @@ def donor_groups(contributions, runoffs):
     return groups
 
 
+def pieces(rows):
+    """The positive amounts a donor gave toward one election, after redesignations and reattributions.
+
+    Each receipt counts at its amount less the memo adjustments that point back to it in this
+    group (a $7,000 primary gift redesignated $3,500 to the general is $3,500 here); a positive
+    adjustment arriving from another election or a spouse is its own gift; a negative adjustment
+    without a matching gift here comes off the largest gift. Negative receipts are not netted.
+    Returns (amounts, receipts over the limit with no adjustment).
+    """
+    # Positive receipts and positive adjustments are gifts; negative adjustments come off the gift
+    # they point back to (possibly an earlier adjustment), else off the largest gift.
+    gifts = [c for c in rows if c["amount"] > 0]
+    tids = {c["tid"] for c in gifts}
+    linked, taken = defaultdict(int), 0
+    for a in (c for c in rows if c.get("adjust") and c["amount"] < 0):
+        if a["parent"] in tids:
+            linked[a["parent"]] += a["amount"]
+        else:
+            taken += a["amount"]
+    amounts = [g["amount"] + linked[g["tid"]] for g in gifts]
+    if taken and amounts:
+        largest = max(range(len(amounts)), key=amounts.__getitem__)
+        amounts[largest] += taken
+    over = sum(1 for g in gifts if not g.get("adjust") and g["amount"] > LIMIT_CENTS and not linked[g["tid"]] and not taken)
+    return [a for a in amounts if a > 0], over
+
+
 def maxout(rows):
-    """("single_gift" | "accumulated" | None, over-limit contribution count) for one donor-election."""
-    positive = [c["amount"] for c in rows if c["amount"] > 0]
-    over = sum(1 for amount in positive if amount > LIMIT_CENTS)
-    if sum(positive) < LIMIT_CENTS:
+    """("single_gift" | "accumulated" | None, unadjusted over-limit receipts) for one donor-election."""
+    amounts, over = pieces(rows)
+    if sum(amounts) < LIMIT_CENTS:
         return None, over
-    return ("single_gift" if max(positive) >= LIMIT_CENTS else "accumulated"), over
+    return ("single_gift" if max(amounts) >= LIMIT_CENTS else "accumulated"), over
+
+
+def near_limit(rows):
+    """True when the itemized total is within $200 below the limit."""
+    return NEAR_LIMIT_CENTS <= sum(pieces(rows)[0]) < LIMIT_CENTS
 
 
 def aggregate_check(groups):
@@ -111,6 +171,8 @@ def aggregate_check(groups):
     disagreement, classified by its likely cause. Returns counts and a few anonymous
     examples (amounts and dates only).
     """
+    groups = {k: [c for c in rows if not c.get("adjust")] for k, rows in groups.items()}
+    groups = {k: rows for k, rows in groups.items() if rows}
     cycle = defaultdict(list)
     for (committee, _, key), rows in groups.items():
         cycle[committee, key] += rows

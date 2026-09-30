@@ -6,6 +6,11 @@ on:
   schedule:
     - cron: '17 */6 * * *'
   workflow_dispatch:
+    inputs:
+      rebuild:
+        description: Re-read every FEC filing even if none changed (geocodes, places and recounts everything)
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -40,7 +45,7 @@ jobs:
         env:
           FEC_API_KEY: ${{ secrets.FEC_API_KEY }}
           GEOCODE_BUDGET_MIN: '60'
-        run: python3 scripts/update_data.py
+        run: python3 scripts/update_data.py ${{ inputs.rebuild && '--rebuild' || '' }}
       - name: Save geocode cache
         if: always() && github.event_name != 'push' && hashFiles('.cache/geocode.json.gz') != ''
         uses: actions/cache/save@v4

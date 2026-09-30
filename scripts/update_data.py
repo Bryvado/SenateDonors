@@ -95,6 +95,34 @@ def optional_cents(value):
         return None
 
 
+def contributor(row, committee, report, state, zip5, day, amount):
+    """The in-memory record of one Schedule A row. FEC v8 Schedule A: 3 back-reference transaction
+    ID, 7-11 name parts, 12-13 street, 14 city, 15 state, 16 ZIP, 17 election code, 18 election
+    description, 21 election-to-date aggregate, 43 memo text."""
+    return {"committee": committee, "tid": row[2].strip(), "state": state,
+            "zip": zip5 if re.fullmatch(r"\d{5}", zip5) else "", "phase": phase_for(day), "day": day,
+            "amount": amount, "address": geocode.normalize(row[12], row[13], row[14], state, zip5),
+            "coded": maxouts.coded_election(row[17], row[18]),
+            "key": maxouts.donor_key(row[7], row[8], zip5), "aggregate": optional_cents(row[21]),
+            "period_end": report["coverage_end_date"][:10]}
+
+
+def memo_adjustment(row, committee, report):
+    """A memo row that redesignates or reattributes an individual's gift, else None."""
+    if row[5].strip().upper() != "IND" or not maxouts.ADJUSTMENT.search(row[43] if len(row) > 43 else ""):
+        return None
+    try:
+        day, amount = datetime.strptime(row[19], "%Y%m%d").date(), cents(row[20])
+    except (ValueError, InvalidOperation):
+        return None
+    state = row[15].strip().upper()
+    if phase_for(day) is None or not re.fullmatch(r"[A-Z]{2}", state):
+        return None
+    record = contributor(row, committee, report, state, row[16].strip()[:5], day, amount)
+    record.update(adjust=True, parent=row[3].strip() or None)
+    return record
+
+
 def parse_report(report, committee, data, states, transaction_ids, months, contributions=None):
     file_number = report["file_number"]
     expected = cents(report["individual_itemized_contributions_period"])
@@ -115,6 +143,12 @@ def parse_report(report, committee, data, states, transaction_ids, months, contr
             if len(row) < 43 or row[1] != committee:
                 raise RuntimeError(f"Unrecognized SA11AI record in {file_number}")
             if row[42].strip().upper() == "X":
+                # Memo rows are not receipts, but redesignations and reattributions move a gift's
+                # dollars between elections or to a spouse; the max-out counts apply them.
+                if contributions is not None:
+                    adjustment = memo_adjustment(row, committee, report)
+                    if adjustment:
+                        contributions.append(adjustment)
                 continue
             try:
                 amount = cents(row[20])
@@ -139,15 +173,7 @@ def parse_report(report, committee, data, states, transaction_ids, months, contr
                 continue
             zip5 = row[16].strip()[:5]
             if contributions is not None:
-                # FEC v8 Schedule A: 7-11 name parts, 12-13 street, 14 city, 15 state, 16 ZIP,
-                # 17 election code, 18 election description, 21 election-to-date aggregate.
-                contributions.append({
-                    "committee": committee, "tid": transaction_id, "state": state,
-                    "zip": zip5 if re.fullmatch(r"\d{5}", zip5) else "", "phase": phase, "day": day,
-                    "amount": amount, "address": geocode.normalize(row[12], row[13], row[14], state, zip5),
-                    "coded": maxouts.coded_election(row[17], row[18]),
-                    "key": maxouts.donor_key(row[7], row[8], zip5), "aggregate": optional_cents(row[21]),
-                    "period_end": report["coverage_end_date"][:10]})
+                contributions.append(contributor(row, committee, report, state, zip5, day, amount))
             for bucket in (states[state, committee, phase], months[state, committee, day.strftime("%Y-%m")]):
                 bucket[0] += max(0, amount)
                 bucket[1] += amount
@@ -234,6 +260,8 @@ def allocate_levels(receipts_csv, crosswalks, out, contributions=None):
         crosswalk = load_crosswalk(crosswalks / filename)
         placed = defaultdict(list)
         for c in contributions or ():
+            if c.get("adjust"):
+                continue
             geoid = c["areas"].get(level)
             if geoid is not None and c["zip"]:
                 placed[c["state"], c["zip"], c["committee"], c["phase"]].append(
@@ -297,13 +325,16 @@ def write_maxouts(contributions, crosswalks, out):
     unallocated = defaultdict(lambda: [0, 0, 0])
     summary = defaultdict(lambda: [0, 0, 0])
     net_below = defaultdict(int)
+    near = defaultdict(int)
     crosswalk = {level: load_crosswalk(crosswalks / filename) for level, (filename, _) in LEVELS.items()}
     for (committee, election, _), rows in groups.items():
         kind, over = maxouts.maxout(rows)
+        near[committee, election] += maxouts.near_limit(rows)
         if kind is None and not over:
             continue
         counts = [kind == "single_gift", kind == "accumulated", over]
-        if kind and sum(c["amount"] for c in rows) < maxouts.LIMIT_CENTS:
+        if kind and sum(c["amount"] for c in rows if not c.get("adjust")) + sum(
+                c["amount"] for c in rows if c.get("adjust")) < maxouts.LIMIT_CENTS:
             net_below[committee] += 1  # reached the limit in positive receipts, but negative adjustments bring it under
         last = rows[-1]
         for i in range(3):
@@ -343,9 +374,14 @@ def write_maxouts(contributions, crosswalks, out):
     return {"limit_cents": maxouts.LIMIT_CENTS, "limit_cycle": maxouts.LIMIT_CYCLE, "limit_source": maxouts.LIMIT_SOURCE,
             "runoff_committees": sorted(runoffs),
             "runoff_designated_without_runoff": {committee: sum(1 for c in contributions if c["committee"] == committee
-                                                                and c["coded"] == ("runoff", "2026"))
+                                                                and not c.get("adjust") and c["coded"] == ("runoff", "2026"))
                                                  for committee in CANDIDATES if committee not in runoffs},
             "maxed_out_but_net_below_limit": dict(sorted(net_below.items())),
+            # Itemized total $3,300-$3,499.99: unitemized receipts (not in FEC itemizations) could put
+            # these at the limit, so the counts are a floor. Not estimated per donor.
+            "near_limit": {f"{committee}|{election}": count for (committee, election), count in sorted(near.items()) if count},
+            "adjustments": {"memo_rows_applied": sum(1 for rows in groups.values() for c in rows if c.get("adjust")),
+                            "rule": "redesignation and reattribution memo rows applied per donor and election"},
             "totals": {f"{committee}|{election}": dict(zip(MAXOUT_HEADER[4:], value))
                        for (committee, election), value in sorted(summary.items())},
             "aggregate_check": {k: check[k] for k in ("groups", "agree", "disagree", "causes")}}
@@ -362,6 +398,8 @@ def geocode_contributions(contributions):
     by_state = defaultdict(lambda: [0, 0])
     for c in contributions:
         c["block"] = found.get(c["address"]) or None if c["address"] else None
+        if c.get("adjust"):
+            continue
         amount = max(0, c["amount"])
         for bucket in (stats[c["committee"]], by_state[c["state"]]):
             bucket[1] += amount
