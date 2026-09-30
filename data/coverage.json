@@ -11,8 +11,8 @@
     "benchmark": "Public_AR_Current",
     "vintage": "Census2020_Current",
     "pending_addresses": 0,
-    "addresses": 55049,
-    "matched_addresses": 53030,
+    "addresses": 55077,
+    "matched_addresses": 53056,
     "dollar_match_rate_by_candidate": {
       "C00369033": 0.8942,
       "C00901918": 0.876,
@@ -115,49 +115,63 @@
       "C00919084": 569
     },
     "maxed_out_but_net_below_limit": {
-      "C00369033": 1,
-      "C00901918": 6
+      "C00369033": 2,
+      "C00901918": 11
+    },
+    "near_limit": {
+      "C00369033|general": 2,
+      "C00369033|primary": 5,
+      "C00369033|runoff": 4,
+      "C00901918|general": 2,
+      "C00901918|primary": 8,
+      "C00901918|runoff": 1,
+      "C00919084|general": 15,
+      "C00919084|primary": 28
+    },
+    "adjustments": {
+      "memo_rows_applied": 3305,
+      "rule": "redesignation and reattribution memo rows applied per donor and election"
     },
     "totals": {
       "C00369033|general": {
-        "single_gift": 3,
-        "accumulated": 0,
+        "single_gift": 18,
+        "accumulated": 1,
         "over_limit_contributions": 0
       },
       "C00369033|primary": {
-        "single_gift": 220,
-        "accumulated": 10,
-        "over_limit_contributions": 81
+        "single_gift": 179,
+        "accumulated": 7,
+        "over_limit_contributions": 1
       },
       "C00369033|runoff": {
-        "single_gift": 155,
-        "accumulated": 1,
-        "over_limit_contributions": 37
+        "single_gift": 199,
+        "accumulated": 22,
+        "over_limit_contributions": 5
       },
       "C00901918|general": {
-        "single_gift": 54,
-        "accumulated": 0,
+        "single_gift": 223,
+        "accumulated": 7,
         "over_limit_contributions": 16
       },
       "C00901918|primary": {
-        "single_gift": 606,
-        "accumulated": 15,
-        "over_limit_contributions": 530
+        "single_gift": 688,
+        "accumulated": 23,
+        "over_limit_contributions": 15
       },
       "C00901918|runoff": {
-        "single_gift": 71,
-        "accumulated": 6,
-        "over_limit_contributions": 45
+        "single_gift": 413,
+        "accumulated": 14,
+        "over_limit_contributions": 19
       },
       "C00919084|general": {
-        "single_gift": 859,
-        "accumulated": 109,
+        "single_gift": 894,
+        "accumulated": 155,
         "over_limit_contributions": 48
       },
       "C00919084|primary": {
         "single_gift": 452,
-        "accumulated": 164,
-        "over_limit_contributions": 6
+        "accumulated": 166,
+        "over_limit_contributions": 4
       }
     },
     "aggregate_check": {
