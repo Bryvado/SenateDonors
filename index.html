@@ -6,10 +6,10 @@
   <meta name="theme-color" content="#0f151a">
   <title>Senate donors · FEC ZIP map</title>
   <link rel="stylesheet" href="vendor/leaflet.css">
-  <link rel="stylesheet" href="style.css?v=24">
+  <link rel="stylesheet" href="style.css?v=25">
   <script defer src="vendor/leaflet.js"></script>
   <script defer src="vendor/topojson-client.min.js"></script>
-  <script defer src="app.js?v=24"></script>
+  <script defer src="app.js?v=25"></script>
 </head>
 <body>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -67,6 +67,7 @@
     <button id="zoom-out" title="Zoom out" aria-label="Zoom out">−</button>
     <button id="theme" title="Dark / light" aria-label="Dark mode" aria-pressed="true">◐</button>
     <button id="tiles" title="Toggle USGS basemap" aria-label="Toggle USGS basemap" aria-pressed="true">▧</button>
+    <button id="data-toggle" title="Show or hide the data shading" aria-label="Data shading" aria-pressed="true">◉</button>
   </div>
   <nav class="tools panel" id="tools" aria-label="Panels">
     <button data-panel="side" aria-pressed="true" title="Totals and monthly receipts"><span aria-hidden="true">▤</span>Totals</button>
@@ -104,9 +105,14 @@
       <div class="dual"><input type="range" id="filter-lo" min="0" max="1000" value="0" aria-label="Minimum"><input type="range" id="filter-hi" min="0" max="1000" value="1000" aria-label="Maximum"></div>
       <div class="filter-ends"><span>Min <b id="filter-min"></b></span><span id="filter-count"></span><span>Max <b id="filter-max"></b></span></div>
       <label class="check"><input type="checkbox" id="filter-all"> Also apply the ranges set on the other statistics (marked •), even when they aren't shown</label>
-      <button id="filter-reset" class="text-btn">Clear all ranges</button>
+      <div class="filter-actions"><button id="filter-reset" class="text-btn">Clear all ranges</button><button id="filter-splom" class="text-btn">Scatter plots</button></div>
       <p class="hint">Drag the handles to keep only places whose value falls inside the range; the rest turn faint and drop out of the color scale and Top places. The histogram covers the places currently colored. Closing this panel removes the filter.</p>
     </div>
+  </aside>
+  <aside class="splom panel float" id="splom" hidden aria-label="Filter view: scatter plots of the filter statistics">
+    <div class="float-head"><span class="grip" aria-hidden="true">⠿</span><span class="float-title">Filter view · <span id="splom-count"></span></span><button class="float-close head-btn" aria-label="Close scatter plots">×</button></div>
+    <div class="float-body splom-body"><div id="splom-plot" class="splom-plot"><canvas id="splom-canvas"></canvas><div id="splom-tip" class="chart-tip" hidden></div></div>
+      <p class="hint">Dots are the colored places: map color = kept, grey = filtered out; bands are ranges. Drag a box to filter, double-click to clear; hover to find a place on the map, click to open it.</p></div>
   </aside>
   <aside class="donors panel float" id="donors" hidden aria-label="Where the money comes from">
     <div class="float-head"><span class="grip" aria-hidden="true">⠿</span><span class="float-title">Where the money comes from · <span id="donors-period"></span></span><button class="float-close head-btn" aria-label="Close donor map">×</button></div>
