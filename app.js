@@ -57,7 +57,9 @@ const stats = {
     get log() { return !maxMode(); }, format: (v) => maxMode() ? Math.round(100 * v) + '%' : short(v)},
   count: {label: () => maxMode() ? 'Accumulated' : 'Contributions', value: (a, b) => a[2] + b[2], log: true, format: (v) => maxMode() ? donors(v) : people(v)},
 };
-const state = {span: [0, 3], first: 'C00919084', second: 'C00901918', measure: 'lead', election: 'all', level: 'zcta',
+// Data shading can be hidden or faded (outlines and tooltips stay); remembered per browser.
+const stored = (key, fallback) => { try { const v = localStorage.getItem(key); return v == null ? fallback : JSON.parse(v); } catch { return fallback; } };
+const state = {dataOn: stored('dataOn', true), dataOpacity: stored('dataOpacity', 1), span: [0, 3], first: 'C00919084', second: 'C00901918', measure: 'lead', election: 'all', level: 'zcta',
   selected: [], lastSelected: [], lastLocalLevel: 'zcta', localPending: false, focused: null, nationwide: false,
   receipts: new Map(), receiptsLoaded: null, totals: new Map(), areas: {}, unallocated: new Map(),
   levelLoads: {}, maxLoaded: null, population: {}, monthly: null, months: [], geo: new Map(), layer: null, index: new Map(), render: 0, visibleKey: null, states: null,
@@ -268,9 +270,10 @@ function classify(amounts, pop, included = true) {
   const s = strength(total);
   return {fill: faded(leadColor(a / total), s), kind: 'value', s};
 }
+const dataAlpha = () => state.dataOn ? state.dataOpacity : 0;
 function paint(amounts, pop) {
   const {fill, kind} = classify(amounts, pop, passes(amounts, pop));
-  return {fillColor: fill, fillOpacity: kind === 'out' ? .12 : kind === 'empty' || kind === 'nopop' ? .3 : .9};
+  return {fillColor: fill, fillOpacity: dataAlpha() * (kind === 'out' ? .12 : kind === 'empty' || kind === 'nopop' ? .3 : .9)};
 }
 function stateStyle(feature) {
   const code = feature.properties.code, chosen = !state.timeline && !state.nationwide && state.selected.includes(code);
@@ -289,7 +292,7 @@ function areaAmounts(level, feature) {
 }
 function areaStyle(level, feature) {
   const {pop} = areaKey(level, feature), amounts = areaAmounts(level, feature);
-  if (!hasReceipts(amounts)) return state.showEmpty ? {pane: 'zctaPane', stroke: true, fill: true, color: LINE, weight: .3, opacity: .6, fillColor: EMPTY, fillOpacity: .5} : {pane: 'zctaPane', stroke: false, fill: false};
+  if (!hasReceipts(amounts)) return state.showEmpty ? {pane: 'zctaPane', stroke: true, fill: true, color: LINE, weight: .3, opacity: .6, fillColor: EMPTY, fillOpacity: .5 * dataAlpha()} : {pane: 'zctaPane', stroke: false, fill: false};
   const focused = state.focused?.level === level && state.focused.key === areaKey(level, feature).key;
   return {pane: 'zctaPane', stroke: true, fill: true, color: focused ? INK : LINE,
     weight: focused ? 2.2 : level === 'zcta' || level === 'cousub' ? .35 : .6, opacity: focused ? 1 : .5,
@@ -690,10 +693,13 @@ function updateLegend() {
       (capita ? fadeRow(ramp[3], 'residents', people) + '<div class="legend-note">Paler = fewer residents, a less stable rate</div>' : '') + noneNote;
   }
   if (filterOn()) html += `<div class="legend-note filter-note">Filter on: faint places are outside the range</div>`;
+  html = `<div class="layer-row"><button class="empty-toggle" id="data-switch" role="switch" aria-checked="${state.dataOn}" title="Show or hide the data shading">Data layer<i></i></button>` +
+    `<input type="range" id="data-opacity" min="10" max="100" step="5" value="${Math.round(100 * state.dataOpacity)}" aria-label="Data layer opacity" title="Opacity" ${state.dataOn ? '' : 'disabled'}></div>` + html;
   if (maxMode()) html += `<div class="legend-note">Donors who gave a candidate ${money((state.coverage?.maxouts?.limit_cents ?? 350000) / 100)} or more for one election, placed at their latest contribution</div>`;
   const placed = state.coverage?.placement?.[level];
   if (placed) html += `<div class="legend-note">${Math.round(100 * placed.address_cents / placed.matched_cents)}% of ${levels[level].noun} dollars placed by street address; the rest estimated from ZIP</div>`;
   $('legend').innerHTML = html;
+  $('legend').classList.toggle('data-off', !state.dataOn);
   fitLegend();
 }
 // The legend sits between the panel buttons and the footer; it shrinks (then collapses to its essentials)
@@ -913,6 +919,183 @@ function filterInput(which) {
   filterFrame = requestAnimationFrame(refresh);
 }
 
+/* Filter view: a scatter-plot matrix of the filter statistics for the colored places. Kept places are
+   drawn in their map color, filtered-out ones faint; bands show the ranges. Drag a box to set the two
+   ranges of a plot, double-click to clear them; hover finds the place on the map, click opens it. */
+const SPLOM = ['total', 'capita', 'share', 'avg', 'count'];
+let splom = null;  // layout and points of the last drawing, for hover and brushing
+// Docked: same left and width as the filter panel, just above it (inside the window).
+function dockSplom() {
+  const panel = $('splom'), filter = $('filter');
+  if (filter.hidden || window.innerWidth <= 850) return;
+  const box = filter.getBoundingClientRect(), gap = 10, top = 84;
+  const height = Math.max(220, Math.min(460, box.top - gap - top));
+  Object.assign(panel.style, {left: box.left + 'px', width: box.width + 'px', height: height + 'px',
+    top: Math.max(top, box.top - gap - height) + 'px', right: 'auto', bottom: 'auto', transform: 'none'});
+}
+function splomAxis(name, items) {
+  const stat = stats[name], vals = items.map(i => stat.value(...i.amounts, i.pop));
+  const ext = filterExtent(vals, stat);
+  return ext && {name, stat, vals, pos: (v) => v == null || (stat.log && v <= 0) ? null : Math.max(0, Math.min(1, ext.toPos(v) / SLIDER)), ext};
+}
+function updateSplom() {
+  const panel = $('splom');
+  if (panel.hidden || !state.statesByCode) return;
+  const canvas = $('splom-canvas'), box = $('splom-plot'), W = box.clientWidth, H = box.clientHeight;
+  if (!W || !H) return;
+  const ratio = window.devicePixelRatio || 1;
+  canvas.width = Math.round(W * ratio); canvas.height = Math.round(H * ratio);
+  const g = canvas.getContext('2d');
+  g.setTransform(ratio, 0, 0, ratio, 0, 0);
+  g.clearRect(0, 0, W, H);
+  const dark = document.documentElement.classList.contains('dark');
+  const ink = dark ? '#93a3ab' : '#53656d', grid = dark ? 'rgba(147,163,171,.18)' : 'rgba(83,101,109,.16)', cellBg = dark ? 'rgba(255,255,255,.03)' : 'rgba(16,33,43,.03)';
+  const items = coloredItems().filter(i => i.amounts[0][0] + i.amounts[1][0] > 0);
+  const axes = SPLOM.map(name => splomAxis(name, items)).filter(Boolean);
+  const f = state.filter, applied = new Set(filterOn() ? (f.all ? Object.keys(f.ranges) : [f.stat]) : []);
+  const kept = items.map(i => passes(i.amounts, i.pop));
+  const nKept = kept.filter(Boolean).length;
+  $('splom-count').textContent = `${nKept.toLocaleString()} of ${items.length.toLocaleString()} ${coloredLevel() === 'state' ? 'states' : levels[coloredLevel()].label} kept`;
+  if (axes.length < 2) { splom = null; g.fillStyle = ink; g.font = '12px system-ui'; g.fillText('Not enough values to plot here.', 8, 20); return; }
+  // Lower triangle: columns are axes[0..n-2], rows axes[1..n-1].
+  const n = axes.length - 1, left = 16, bottom = 16, gap = 5;
+  // Cells stretch to fill the panel, so resizing it reshapes the plots.
+  const cw = Math.max(20, (W - left - gap * (n - 1)) / n), ch = Math.max(20, (H - bottom - gap * (n - 1)) / n);
+  const cells = [];
+  for (let r = 0; r < n; r++) for (let c = 0; c <= r; c++) {
+    cells.push({x: axes[c], y: axes[r + 1], x0: left + c * (cw + gap), y0: r * (ch + gap), w: cw, h: ch});
+  }
+  const color = items.map((i, k) => kept[k] ? classify(i.amounts, i.pop, true).fill : null);
+  const dot = Math.max(1.4, Math.min(3.2, 260 / Math.sqrt(items.length + 1) / 4));
+  const points = [];
+  for (const cell of cells) {
+    const {x, y, x0, y0, w, h} = cell;
+    g.fillStyle = cellBg; g.fillRect(x0, y0, w, h);
+    // Ranges: a vertical band for the x statistic, a horizontal one for y; solid when the filter applies them.
+    for (const [axis, vertical] of [[x, true], [y, false]]) {
+      const range = f.ranges[axis.name];
+      if (!range) continue;
+      const a = range[0] == null ? 0 : axis.pos(range[0]) ?? 0, b = range[1] == null ? 1 : axis.pos(range[1]) ?? 1;
+      g.fillStyle = applied.has(axis.name) ? 'rgba(59,143,208,.16)' : 'rgba(147,163,171,.10)';
+      if (vertical) g.fillRect(x0 + a * w, y0, (b - a) * w, h);
+      else g.fillRect(x0, y0 + (1 - b) * h, w, (b - a) * h);
+    }
+    g.strokeStyle = grid; g.lineWidth = 1; g.strokeRect(x0 + .5, y0 + .5, w - 1, h - 1);
+    const px = [];
+    // Filtered-out places first so kept ones sit on top.
+    for (const pass of [false, true]) {
+      g.fillStyle = dark ? 'rgba(147,163,171,.28)' : 'rgba(83,101,109,.22)';
+      for (let k = 0; k < items.length; k++) {
+        if (kept[k] !== pass) continue;
+        const u = x.pos(x.vals[k]), v = y.pos(y.vals[k]);
+        if (u == null || v == null) continue;
+        const cx = x0 + 2 + u * (w - 4), cy = y0 + 2 + (1 - v) * (h - 4);
+        if (pass) g.fillStyle = color[k];
+        g.beginPath(); g.arc(cx, cy, pass ? dot : dot * .8, 0, 2 * Math.PI); g.fill();
+        px.push([cx, cy, k]);
+      }
+    }
+    points.push(px);
+  }
+  // Axis names: under the bottom row and beside the first column.
+  g.fillStyle = ink; g.font = '600 9.5px system-ui'; g.textBaseline = 'middle';
+  for (let c = 0; c < n; c++) { g.textAlign = 'center'; g.fillText(axes[c].stat.label(), left + c * (cw + gap) + cw / 2, n * (ch + gap) - gap + bottom / 2, cw); }
+  for (let r = 0; r < n; r++) {
+    g.save(); g.translate(left / 2, r * (ch + gap) + ch / 2); g.rotate(-Math.PI / 2); g.textAlign = 'center';
+    g.fillText(axes[r + 1].stat.label(), 0, 0, ch); g.restore();
+  }
+  // Key in the empty upper-right corner.
+  if (n > 1) {
+    const kx = left + cw + gap + 8, ky = 8;
+    g.textAlign = 'left'; g.font = '11px system-ui';
+    g.fillStyle = ramp[2]; g.beginPath(); g.arc(kx + 4, ky + 6, 3.5, 0, 7); g.fill(); g.fillStyle = ink; g.fillText(`Kept · ${nKept.toLocaleString()}`, kx + 12, ky + 6);
+    g.fillStyle = dark ? 'rgba(147,163,171,.45)' : 'rgba(83,101,109,.4)'; g.beginPath(); g.arc(kx + 4, ky + 22, 3, 0, 7); g.fill();
+    g.fillStyle = ink; g.fillText(`Filtered out · ${(items.length - nKept).toLocaleString()}`, kx + 12, ky + 22);
+    g.fillText(filterOn() ? (f.all ? 'All ranges applied' : `Applied: ${stats[f.stat].label()}`) : 'Filter closed: nothing excluded', kx, ky + 40);
+  }
+  splom = {cells, points, items, W, H};
+}
+function splomCell(e) {
+  if (!splom) return null;
+  const box = $('splom-canvas').getBoundingClientRect(), x = e.clientX - box.left, y = e.clientY - box.top;
+  const index = splom.cells.findIndex(c => x >= c.x0 && x <= c.x0 + c.w && y >= c.y0 && y <= c.y0 + c.h);
+  return index < 0 ? {x, y} : {x, y, index, cell: splom.cells[index]};
+}
+function splomNearest(hit) {
+  let best = null, d2 = 64;
+  for (const [px, py, k] of splom.points[hit.index]) {
+    const d = (px - hit.x) ** 2 + (py - hit.y) ** 2;
+    if (d < d2) { d2 = d; best = k; }
+  }
+  return best;
+}
+let splomHover = null, splomDrag = null;
+function splomLight(item, on) {
+  if (!item) return;
+  if (!item.isState) return highlight(item.key, on);
+  state.states.eachLayer(layer => { if (layer.feature.properties.code === item.key) layer.setStyle(on ? {weight: 2.4, color: INK} : stateStyle(layer.feature)); });
+}
+$('splom-canvas').addEventListener('pointermove', e => {
+  const hit = splomCell(e), tip = $('splom-tip');
+  if (splomDrag) {
+    splomDrag.x1 = Math.max(splomDrag.cell.x0, Math.min(splomDrag.cell.x0 + splomDrag.cell.w, hit.x));
+    splomDrag.y1 = Math.max(splomDrag.cell.y0, Math.min(splomDrag.cell.y0 + splomDrag.cell.h, hit.y));
+    updateSplom();
+    const g = $('splom-canvas').getContext('2d'), d = splomDrag;
+    g.strokeStyle = '#3b8fd0'; g.lineWidth = 1.2; g.setLineDash([4, 3]);
+    g.strokeRect(Math.min(d.x, d.x1), Math.min(d.y, d.y1), Math.abs(d.x1 - d.x), Math.abs(d.y1 - d.y)); g.setLineDash([]);
+    return;
+  }
+  const k = hit?.cell ? splomNearest(hit) : null, item = k == null ? null : splom.items[k];
+  if (item !== splomHover) { splomLight(splomHover, false); splomLight(item, true); splomHover = item; }
+  if (!item) { tip.hidden = true; return; }
+  const {x, y} = hit.cell;
+  tip.innerHTML = `<b>${item.name}</b><div>${x.stat.label()}: ${x.stat.format(x.vals[k])}</div><div>${y.stat.label()}: ${y.stat.format(y.vals[k])}</div>` +
+    (passes(item.amounts, item.pop) ? '' : '<div class="muted">Filtered out</div>');
+  tip.hidden = false;
+  tip.style.left = Math.min(splom.W - tip.offsetWidth, hit.x + 12) + 'px';
+  tip.style.top = Math.max(0, hit.y - tip.offsetHeight - 8) + 'px';
+});
+$('splom-canvas').addEventListener('pointerleave', () => { if (!splomDrag) { splomLight(splomHover, false); splomHover = null; $('splom-tip').hidden = true; } });
+$('splom-canvas').addEventListener('pointerdown', e => {
+  const hit = splomCell(e);
+  if (!hit?.cell) return;
+  e.currentTarget.setPointerCapture(e.pointerId);
+  splomDrag = {...hit, x1: hit.x, y1: hit.y};
+});
+$('splom-canvas').addEventListener('pointerup', e => {
+  const d = splomDrag;
+  splomDrag = null;
+  if (!d) return;
+  const {cell} = d;
+  if (Math.abs(d.x1 - d.x) < 4 && Math.abs(d.y1 - d.y) < 4) {
+    // A click, not a box: open the place under the pointer.
+    const k = splomNearest(d);
+    if (k == null) return updateSplom();
+    const item = splom.items[k];
+    if (item.isState) return chooseState(item.key, modifier(e));
+    const polygon = state.index.get(item.key);
+    if (polygon) { focusArea(state.layer.level, polygon.feature, polygon); polygon.openTooltip(polygon.getBounds().getCenter()); }
+    return;
+  }
+  // Pixel box -> value ranges on both statistics; both then apply.
+  const toVal = (axis, t) => axis.ext.toVal(Math.max(0, Math.min(1, t)) * SLIDER);
+  const u0 = (Math.min(d.x, d.x1) - cell.x0 - 2) / (cell.w - 4), u1 = (Math.max(d.x, d.x1) - cell.x0 - 2) / (cell.w - 4);
+  const v0 = 1 - (Math.max(d.y, d.y1) - cell.y0 - 2) / (cell.h - 4), v1 = 1 - (Math.min(d.y, d.y1) - cell.y0 - 2) / (cell.h - 4);
+  const f = state.filter;
+  f.ranges[cell.x.name] = [u0 <= 0 ? null : toVal(cell.x, u0), u1 >= 1 ? null : toVal(cell.x, u1)];
+  f.ranges[cell.y.name] = [v0 <= 0 ? null : toVal(cell.y, v0), v1 >= 1 ? null : toVal(cell.y, v1)];
+  f.all = true;
+  refresh();
+});
+$('splom-canvas').addEventListener('dblclick', e => {
+  const hit = splomCell(e);
+  if (!hit?.cell) return;
+  delete state.filter.ranges[hit.cell.x.name]; delete state.filter.ranges[hit.cell.y.name];
+  refresh();
+});
+$('filter-splom').addEventListener('click', () => openPanel('splom', $('splom').hidden));
+
 /* Donors panel: where each candidate's itemized money comes from. */
 function updateDonors() {
   if ($('donors').hidden || !state.statesByCode) return;
@@ -1023,8 +1206,8 @@ function placeFree(panel) {
 }
 let z = 1010;
 const front = (panel) => { panel.style.zIndex = ++z; };
-const PANELS = ['side', 'rank', 'donors', 'timeline', 'filter'];
-const redraw = (id) => ({side: updatePanel, rank: updateRank, donors: updateDonors, timeline: updateTimeline, filter: updateFilter})[id]?.();
+const PANELS = ['side', 'rank', 'donors', 'timeline', 'filter', 'splom'];
+const redraw = (id) => ({side: updatePanel, rank: updateRank, donors: updateDonors, timeline: updateTimeline, filter: updateFilter, splom: updateSplom})[id]?.();
 function openPanel(id, open) {
   const panel = $(id);
   if (open && window.innerWidth <= 850) for (const other of PANELS) if (other !== id && !$(other).hidden) openPanel(other, false);
@@ -1032,8 +1215,12 @@ function openPanel(id, open) {
   document.querySelector(`[data-panel="${id}"]`)?.setAttribute('aria-pressed', String(open));
   if (id === 'timeline') setTimeline(open);
   if (id === 'filter') loadLevel(state.level).then(refresh, showError);
+  // The scatter plots travel with the filter: they open docked just above it and close with it.
+  if (id === 'filter' && !open && !$('splom').hidden) openPanel('splom', false);
+  if (id === 'splom' && open && window.innerWidth > 850) { panel.hidden = false; front(panel); dockSplom(); redraw(id); return; }
   if (open) {
     front(panel);
+    if (id === 'filter' && window.innerWidth > 850) setTimeout(() => openPanel('splom', true));
     if (id === 'rank') loadLevel(state.level).then(updateRank, showError);
     redraw(id);
     placeFree(panel);
@@ -1041,13 +1228,22 @@ function openPanel(id, open) {
   }
 }
 
+function restyle() {
+  state.states.setStyle(stateStyle);
+  if (state.layer) { state.layer.setStyle(feature => areaStyle(state.layer.level, feature)); syncInteractivity(); }
+}
 function refresh() {
   if (!state.states) return;
   computeScales();
-  state.states.setStyle(stateStyle);
-  if (state.layer) { state.layer.setStyle(feature => areaStyle(state.layer.level, feature)); syncInteractivity(); }
+  restyle();
   document.querySelectorAll('.candidate-dot').forEach(dot => { dot.style.background = hues[state[dot.dataset.slot]]; });
-  updateLegend(); updatePanel(); updateRank(); updateDonors(); updateTimeline(); updateFilter();
+  updateLegend(); updatePanel(); updateRank(); updateDonors(); updateTimeline(); updateFilter(); updateSplom();
+}
+function setData(on, opacity = state.dataOpacity) {
+  state.dataOn = on; state.dataOpacity = opacity;
+  try { localStorage.setItem('dataOn', JSON.stringify(on)); localStorage.setItem('dataOpacity', JSON.stringify(opacity)); } catch {}
+  $('data-toggle').setAttribute('aria-pressed', String(on));
+  restyle();
 }
 async function start() {
   const [boundaries, totals, coverage] = await Promise.all([
@@ -1211,6 +1407,10 @@ $('nation').addEventListener('click', () => setNationwide(!state.nationwide));
 $('zoom-in').addEventListener('click', () => map.zoomIn());
 $('zoom-out').addEventListener('click', () => map.zoomOut());
 map.on('moveend', () => { if (detailKey() !== state.visibleKey) render(); });
+$('data-toggle').addEventListener('click', () => { setData(!state.dataOn); updateLegend(); });
+$('legend').addEventListener('click', e => { if (e.target.closest('#data-switch')) { setData(!state.dataOn); updateLegend(); } });
+// Opacity restyles only, so the slider is not rebuilt mid-drag.
+$('legend').addEventListener('input', e => { if (e.target.id === 'data-opacity') setData(true, Number(e.target.value) / 100); });
 $('tiles').addEventListener('click', () => {
   const active = map.hasLayer(tiles);
   active ? map.removeLayer(tiles) : tiles.addTo(map);
