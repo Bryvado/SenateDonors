@@ -950,12 +950,15 @@ function updateSplom() {
   g.clearRect(0, 0, W, H);
   const dark = document.documentElement.classList.contains('dark');
   const ink = dark ? '#93a3ab' : '#53656d', grid = dark ? 'rgba(147,163,171,.18)' : 'rgba(83,101,109,.16)', cellBg = dark ? 'rgba(255,255,255,.03)' : 'rgba(16,33,43,.03)';
-  const items = coloredItems().filter(i => i.amounts[0][0] + i.amounts[1][0] > 0);
-  const axes = SPLOM.map(name => splomAxis(name, items)).filter(Boolean);
+  // Only the places the filter keeps are plotted, and the axes zoom to them.
+  const all = coloredItems().filter(i => i.amounts[0][0] + i.amounts[1][0] > 0);
   const f = state.filter, applied = new Set(filterOn() ? (f.all ? Object.keys(f.ranges) : [f.stat]) : []);
-  const kept = items.map(i => passes(i.amounts, i.pop));
-  const nKept = kept.filter(Boolean).length;
-  $('splom-count').textContent = `${nKept.toLocaleString()} of ${items.length.toLocaleString()} ${coloredLevel() === 'state' ? 'states' : levels[coloredLevel()].label} kept`;
+  const passing = all.filter(i => passes(i.amounts, i.pop));
+  const items = passing.length ? passing : all;
+  const axes = SPLOM.map(name => splomAxis(name, items)).filter(Boolean);
+  const kept = items.map(() => true);
+  const nKept = passing.length;
+  $('splom-count').textContent = `${nKept.toLocaleString()} of ${all.length.toLocaleString()} ${coloredLevel() === 'state' ? 'states' : levels[coloredLevel()].label} kept`;
   if (axes.length < 2) { splom = null; g.fillStyle = ink; g.font = '12px system-ui'; g.fillText('Not enough values to plot here.', 8, 20); return; }
   // Lower triangle: columns are axes[0..n-2], rows axes[1..n-1].
   const n = axes.length - 1, left = 16, bottom = 16, gap = 5;
@@ -1010,7 +1013,7 @@ function updateSplom() {
     g.textAlign = 'left'; g.font = '11px system-ui';
     g.fillStyle = ramp[2]; g.beginPath(); g.arc(kx + 4, ky + 6, 3.5, 0, 7); g.fill(); g.fillStyle = ink; g.fillText(`Kept · ${nKept.toLocaleString()}`, kx + 12, ky + 6);
     g.fillStyle = dark ? 'rgba(147,163,171,.45)' : 'rgba(83,101,109,.4)'; g.beginPath(); g.arc(kx + 4, ky + 22, 3, 0, 7); g.fill();
-    g.fillStyle = ink; g.fillText(`Filtered out · ${(items.length - nKept).toLocaleString()}`, kx + 12, ky + 22);
+    g.fillStyle = ink; g.fillText(`Filtered out (hidden) · ${(all.length - nKept).toLocaleString()}`, kx + 12, ky + 22);
     g.fillText(filterOn() ? (f.all ? 'All ranges applied' : `Applied: ${stats[f.stat].label()}`) : 'Filter closed: nothing excluded', kx, ky + 40);
   }
   splom = {cells, points, items, W, H};

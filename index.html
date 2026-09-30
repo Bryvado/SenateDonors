@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="style.css?v=25">
   <script defer src="vendor/leaflet.js"></script>
   <script defer src="vendor/topojson-client.min.js"></script>
-  <script defer src="app.js?v=26"></script>
+  <script defer src="app.js?v=27"></script>
 </head>
 <body>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -112,7 +112,7 @@
   <aside class="splom panel float" id="splom" hidden aria-label="Filter view: scatter plots of the filter statistics">
     <div class="float-head"><span class="grip" aria-hidden="true">⠿</span><span class="float-title">Filter view · <span id="splom-count"></span></span><button class="float-close head-btn" aria-label="Close scatter plots">×</button></div>
     <div class="float-body splom-body"><div id="splom-plot" class="splom-plot"><canvas id="splom-canvas"></canvas><div id="splom-tip" class="chart-tip" hidden></div></div>
-      <p class="hint">Dots are the colored places: map color = kept, grey = filtered out; bands are ranges. Drag a box to filter, double-click to clear; hover to find a place on the map, click to open it.</p></div>
+      <p class="hint">Dots are the places the filter keeps, in their map color; the axes zoom to them. Drag a box to filter, double-click to clear; hover to find a place on the map, click to open it.</p></div>
   </aside>
   <aside class="donors panel float" id="donors" hidden aria-label="Where the money comes from">
     <div class="float-head"><span class="grip" aria-hidden="true">⠿</span><span class="float-title">Where the money comes from · <span id="donors-period"></span></span><button class="float-close head-btn" aria-label="Close donor map">×</button></div>
