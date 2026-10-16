@@ -15,7 +15,8 @@
       1948212,
       1963451,
       1974751,
-      1995596
+      1995596,
+      2022920
     ],
     "C00901918": [
       1947090,
@@ -24,7 +25,8 @@
       1973263,
       1973265,
       1996198,
-      2000910
+      2000910,
+      2026455
     ]
   },
   "reports": [
@@ -133,6 +135,14 @@
       "itemized_cents": 33215046
     },
     {
+      "committee": "C00369033",
+      "file_number": 2022920,
+      "url": "https://docquery.fec.gov/csv/920/2022920.csv",
+      "coverage_end": "2026-09-30",
+      "individual_rows": 0,
+      "itemized_cents": 0
+    },
+    {
       "committee": "C00901918",
       "file_number": 1947090,
       "url": "https://docquery.fec.gov/csv/090/1947090.csv",
@@ -187,6 +197,14 @@
       "coverage_end": "2026-05-06",
       "individual_rows": 1918,
       "itemized_cents": 41902233
+    },
+    {
+      "committee": "C00901918",
+      "file_number": 2026455,
+      "url": "https://docquery.fec.gov/csv/455/2026455.csv",
+      "coverage_end": "2026-09-30",
+      "individual_rows": 39978,
+      "itemized_cents": 644742005
     }
   ]
 }
