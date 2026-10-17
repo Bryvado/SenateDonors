@@ -2,10 +2,11 @@
   "committees": {
     "C00919084": [
       1921319,
-      1997887,
       2011129,
       2011130,
-      2011132
+      2011132,
+      2027577,
+      2027782
     ],
     "C00369033": [
       1886923,
@@ -40,14 +41,6 @@
     },
     {
       "committee": "C00919084",
-      "file_number": 1997887,
-      "url": "https://docquery.fec.gov/csv/887/1997887.csv",
-      "coverage_end": "2026-06-30",
-      "individual_rows": 98849,
-      "itemized_cents": 1186752442
-    },
-    {
-      "committee": "C00919084",
       "file_number": 2011129,
       "url": "https://docquery.fec.gov/csv/129/2011129.csv",
       "coverage_end": "2025-12-31",
@@ -69,6 +62,22 @@
       "coverage_end": "2026-03-31",
       "individual_rows": 45579,
       "itemized_cents": 852139774
+    },
+    {
+      "committee": "C00919084",
+      "file_number": 2027577,
+      "url": "https://docquery.fec.gov/csv/577/2027577.csv",
+      "coverage_end": "2026-06-30",
+      "individual_rows": 98873,
+      "itemized_cents": 1186029051
+    },
+    {
+      "committee": "C00919084",
+      "file_number": 2027782,
+      "url": "https://docquery.fec.gov/csv/782/2027782.csv",
+      "coverage_end": "2026-09-30",
+      "individual_rows": 245799,
+      "itemized_cents": 2755766404
     },
     {
       "committee": "C00369033",
