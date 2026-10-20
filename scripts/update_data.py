@@ -43,13 +43,21 @@ CD_VINTAGE = "119th Congress districts (Census cb_2024_us_cd119_500k), as used b
 
 
 def phase_for(day):
+    """Election phases through the runoff, then the period through Jun 30 and one phase per calendar
+    quarter ("2026q3"), matching the FEC quarterly reports, so each new quarter gets its own step."""
     if day < START:
         return None
     if day <= date(2026, 3, 3):
         return PHASES[0]
     if day <= date(2026, 5, 26):
         return PHASES[1]
-    return PHASES[2]
+    if day <= date(2026, 6, 30):
+        return PHASES[2]
+    return f"{day.year}q{(day.month - 1) // 3 + 1}"
+
+
+def is_phase(value):
+    return value in PHASES or re.fullmatch(r"20\d\dq[1-4]", value) is not None
 
 
 def fetch_json(url):

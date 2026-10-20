@@ -7,7 +7,7 @@ from collections import defaultdict
 from decimal import Decimal
 from pathlib import Path
 
-from update_data import publish, CANDIDATES, PHASES
+from update_data import publish, CANDIDATES, is_phase
 
 
 def main():
@@ -23,7 +23,7 @@ def main():
                 continue
             candidate = next(code for code, name in CANDIDATES.items() if name == row["candidate"])
             state, zip5, phase = row["state"], row["zip5"], row["period"]
-            if not state or phase not in PHASES:
+            if not state or not is_phase(phase):
                 continue
             values = [
                 int(Decimal(row["positive_receipts"]) * 100),

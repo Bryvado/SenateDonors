@@ -6,10 +6,10 @@
   <meta name="theme-color" content="#0f151a">
   <title>Senate donors · FEC ZIP map</title>
   <link rel="stylesheet" href="vendor/leaflet.css">
-  <link rel="stylesheet" href="style.css?v=25">
+  <link rel="stylesheet" href="style.css?v=26">
   <script defer src="vendor/leaflet.js"></script>
   <script defer src="vendor/topojson-client.min.js"></script>
-  <script defer src="app.js?v=28"></script>
+  <script defer src="app.js?v=29"></script>
 </head>
 <body>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -21,11 +21,11 @@
     <div class="separator" aria-hidden="true"></div>
     <div class="control period" id="period-control" role="group" aria-labelledby="period-name"><span id="period-name">Period · <b id="period-value">All reported</b></span>
       <div class="period-slider">
-        <div class="period-track"><span id="period-fill" class="period-fill"></span><i style="left:33.33%"></i><i style="left:66.67%"></i></div>
+        <div class="period-track" id="period-track"><span id="period-fill" class="period-fill"></span><i style="left:33.33%"></i><i style="left:66.67%"></i></div>
         <input type="range" id="period-lo" min="0" max="3" step="1" value="0" aria-label="Period start" aria-valuetext="From the start">
         <input type="range" id="period-hi" min="0" max="3" step="1" value="3" aria-label="Period end">
       </div>
-      <div class="period-ticks"><span>Through Mar 3</span><span>Mar 4 – May 26</span><span>Since May 27</span></div>
+      <div class="period-ticks" id="period-ticks"><span>Through Mar 3</span><span>Mar 4 – May 26</span><span>Since May 27</span></div>
     </div>
     <label class="control candidate"><span><i class="candidate-dot" data-slot="first"></i>Compare</span>
       <select id="first"><option value="C00919084">Talarico</option><option value="C00369033">Cornyn</option><option value="C00901918">Paxton</option></select>
@@ -133,7 +133,7 @@
   <aside class="about panel" id="about" hidden aria-label="Data sources and methods">
     <button class="close" id="about-close" aria-label="Close sources and methods">×</button>
     <h1>About this map</h1>
-    <p>Itemized contributions from individuals to the principal federal campaign committees of James Talarico, John Cornyn, and Ken Paxton, placed at each contributor's reported ZIP. Receipt dates define the three periods (through the Mar 3 primary, Mar 4 – May 26 runoff, and since May 27); drag the two Period handles to include any continuous stretch of them. Amendments replace superseded reports. Unitemized contributions (generally $200 or less per donor per election) are not included.</p>
+    <p>Itemized contributions from individuals to the principal federal campaign committees of James Talarico, John Cornyn, and Ken Paxton, placed at each contributor's reported ZIP. Receipt dates define the periods (through the Mar 3 primary, Mar 4 – May 26 runoff, May 27 – Jun 30, then one per calendar quarter, matching the FEC quarterly reports); drag the two Period handles to include any continuous stretch of them. Amendments replace superseded reports. Unitemized contributions (generally $200 or less per donor per election) are not included.</p>
     <p><strong>Who led</strong> tints every place toward whichever of the two compared candidates raised more there, in four steps per side by the leader's share (50–55%, 55–65%, 65–80%, 80%+); even a narrow lead is shown, and only an exact tie is neutral. There is no fixed cutoff for places with few dollars: colors fade smoothly toward pale as the dollars behind them shrink, relative to the places shown. <strong>Total raised</strong> is the pair's combined dollars. <strong>Per 100 residents</strong> divides that by ACS 2020–2024 population and fades places with few residents, whose rates are less stable. For these two, each color holds about a fifth of the places shown, and the legend lists the cutoffs. Only one level is colored at a time: states when nothing is open, otherwise just the open areas, with other states left plain. Contribution counts are entries, not unique donors.</p>
     <p>ZIP outlines are 2020 Census ZIP Code Tabulation Areas (ZCTAs), which do not match every mailing ZIP; the ZIP view always uses the reported ZIP. In the County, Congressional district, Metro/micro area, and County subdivision views, each contribution whose street address the Census geocoder matched is placed exactly, in the area that contains the address. Only the rest (unmatched addresses, PO boxes, ties) is <strong>estimated</strong>: that part of each reported ZIP's total is apportioned among the areas the ZIP overlaps by the share of its residential addresses in each (all addresses for ZIPs with none), from the HUD USPS ZIP crosswalk (June 2026). Tooltips show how much of each area's dollars were placed by address. <span id="about-placement"></span> ZIPs outside the crosswalk and non-metro or unassigned portions are left out of the shading, but state totals still include them. Congressional districts are the 119th Congress districts (the map's boundaries and the HUD crosswalk); Texas's 2025 mid-decade plan is not shown. Addresses are used only while the data are refreshed and are never published.</p>
     <p><strong>Max-out donors</strong> reached the federal limit of $3,500 per election from one person to a candidate (2025–26 cycle; the primary, runoff, and general are separate elections, and a contribution without a designation counts toward the next election after its date). A donor is a committee's contributions under one last name, first name, and ZIP. <em>In one gift</em> means a single contribution of $3,500 or more; <em>accumulated</em> means two or more that add up to it. Each donor is placed at their latest contribution for that election. Committees fix gifts over the limit by <em>redesignating</em> the excess to another election or <em>reattributing</em> part of a joint gift to a spouse; these fixes are filed as memo entries, and the counts apply them, so a $7,000 gift split between the primary and the general is a $3,500 gift in each, and a spouse's share counts as the spouse's own gift. The gifts still marked over the limit are those with no such fix on file yet: mostly ones the committee reports as refunded, charged back, or to be refunded or reattributed in a later report. Schedule B refunds are not subtracted, so a max-out means the money was received, not necessarily kept. The counts are also a <strong>floor</strong>: donors whose itemized total is just under the limit may have reached it with unitemized gifts (under $200, not itemized by the FEC)<span id="about-near"></span>. The Period slider does not apply; choose an election instead. Rates are per 10,000 residents.</p>
