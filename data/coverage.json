@@ -1,5 +1,5 @@
 {
-  "retrieved": "2026-10-17",
+  "retrieved": "2026-10-20",
   "coverage_start": "2025-01-01",
   "coverage_end": "2026-09-30",
   "filing_count": 23,
@@ -96,7 +96,7 @@
       "matched_cents": 7374372860,
       "address_cents": 6792174623,
       "mapped_address_cents": 6690517688,
-      "unallocated_cents": 157891318
+      "unallocated_cents": 157891314
     },
     "cousub": {
       "matched_cents": 7375406192,
