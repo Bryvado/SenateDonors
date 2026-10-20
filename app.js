@@ -4,15 +4,40 @@ const names = {C00919084: 'Talarico', C00369033: 'Cornyn', C00901918: 'Paxton'};
 // Each candidate keeps one color everywhere (map, legend, charts); checked for color-vision separation.
 const hues = {C00919084: '#1f6fd1', C00369033: '#e09a12', C00901918: '#d62f45'};
 const order = ['C00919084', 'C00369033', 'C00901918'];
-const phases = ['pre_primary', 'between_primary_runoff', 'post_runoff'];
-// Period is a contiguous span of phases, [start, end) as phase indexes; the masthead slider snaps to phase boundaries.
-const phaseEdges = ['Jan 2025', 'Mar 3', 'May 26', 'latest'];
+/* Period phases: the three election stretches through Jun 30, 2026, then one per calendar quarter ("2026q3"),
+   as written by phase_for() in update_data.py. The list comes from the data (setPhases), so the Period slider gains
+   a step when a new quarter's filings arrive. Each phase is [first day, last day]; the last phase ends at the
+   latest FEC coverage date. */
+const PHASE_DAYS = {pre_primary: ['2025-01-01', '2026-03-03'], between_primary_runoff: ['2026-03-04', '2026-05-26'], post_runoff: ['2026-05-27', '2026-06-30']};
+let phases = Object.keys(PHASE_DAYS);
+function phaseDays(phase) {
+  const q = /^(\d{4})q([1-4])$/.exec(phase);
+  if (!q) return PHASE_DAYS[phase];
+  const m = 3 * q[2] - 2, last = new Date(Date.UTC(+q[1], m + 2, 0)).getUTCDate();
+  return [`${q[1]}-${String(m).padStart(2, '0')}-01`, `${q[1]}-${String(m + 2).padStart(2, '0')}-${last}`];
+}
+function setPhases(rows) {
+  const quarters = [...new Set(rows.map(r => r.phase).filter(p => /^\d{4}q[1-4]$/.test(p)))].sort();
+  phases = [...Object.keys(PHASE_DAYS), ...quarters];
+  const n = phases.length;
+  $('period-control').style.setProperty('--phases', n);
+  state.span = [0, n];
+  for (const id of ['period-lo', 'period-hi']) { $(id).max = n; }
+  $('period-lo').value = 0; $('period-hi').value = n;
+  $('period-track').querySelectorAll('i').forEach(i => i.remove());
+  for (let k = 1; k < n; k++) $('period-track').insertAdjacentHTML('beforeend', `<i style="left:${100 * k / n}%"></i>`);
+  $('period-ticks').innerHTML = phases.map((p, k) => `<span>${k === 0 ? 'Through ' : dayLabel(phaseDays(p)[0]) + ' – '}${dayLabel(phaseEnd(k))}</span>`).join('');
+  syncPeriod();
+}
+const dayLabel = (day) => new Date(day + 'T12:00:00Z').toLocaleDateString('en-US', {month: 'short', day: 'numeric', timeZone: 'UTC'});
+// The last phase runs to the latest coverage date (older data has no quarters, so "post_runoff" is open-ended).
+const phaseEnd = (k) => k === phases.length - 1 && state.coverage?.coverage_end ? state.coverage.coverage_end : phaseDays(phases[k])[1];
+const phaseMonths = (phase) => { const k = phases.indexOf(phase), [a] = phaseDays(phase); return [a.slice(0, 7), k === phases.length - 1 ? '9999-12' : phaseDays(phase)[1].slice(0, 7)]; };
 function periodLabel() {
   const [a, b] = state.span;
   if (a === 0 && b === phases.length) return 'All reported';
-  if (a === 0) return `Through ${phaseEdges[b]}`;
-  if (b === phases.length) return `Since ${['', 'Mar 4', 'May 27'][a]}`;
-  return ['', 'Mar 4', 'May 27'][a] + ' – ' + phaseEdges[b];
+  if (a === 0) return `Through ${dayLabel(phaseEnd(b - 1))}`;
+  return `${dayLabel(phaseDays(phases[a])[0])} – ${dayLabel(phaseEnd(b - 1))}`;
 }
 // Max-out donors are counted per election (FEC limits apply separately to the primary, runoff and general).
 const elections = ['primary', 'runoff', 'general'];
@@ -23,7 +48,6 @@ const perResidents = () => state.measure === 'capita' || state.measure === 'maxc
 // Dollars are shown per 100 residents; max-out donors, far fewer, per 10,000.
 const PER = () => maxMode() ? 10000 : 100;
 const perLabel = () => maxMode() ? 'per 10,000 residents' : 'per 100 residents';
-const phaseMonths = {pre_primary: ['2025-01', '2026-03'], between_primary_runoff: ['2026-03', '2026-05'], post_runoff: ['2026-05', '9999-12']};
 const money = (n) => '$' + Math.round(n).toLocaleString('en-US');
 const short = (n) => n >= 1e6 ? '$' + +(n / 1e6).toFixed(1) + 'm' : n >= 1e3 ? '$' + +(n / 1e3).toFixed(1) + 'k' : '$' + Math.round(n);
 const people = (n) => n >= 1e6 ? +(n / 1e6).toFixed(1) + 'm' : n >= 1e3 ? +(n / 1e3).toFixed(1) + 'k' : String(Math.round(n));
@@ -736,7 +760,7 @@ function lineChart(lines, W, H, {marker = null, band = true} = {}) {
   const index = (m) => months.findIndex(x => x >= m);
   let shade = '';
   if (band && state.span[1] - state.span[0] < phases.length && !state.timeline) {
-    const start = phaseMonths[phases[state.span[0]]][0], end = phaseMonths[phases[state.span[1] - 1]][1], i0 = Math.max(0, index(start)), i1 = index(end) < 0 ? months.length - 1 : index(end);
+    const start = phaseMonths(phases[state.span[0]])[0], end = phaseMonths(phases[state.span[1] - 1])[1], i0 = Math.max(0, index(start)), i1 = index(end) < 0 ? months.length - 1 : index(end);
     shade = `<rect x="${x(i0)}" y="${T0}" width="${Math.max(2, x(i1) - x(i0))}" height="${H - T0 - B0}" class="band"/>`;
   }
   // Primary label sits left of its line and Runoff right of its, so the adjacent months don't collide.
@@ -1254,8 +1278,10 @@ function setData(on, opacity = state.dataOpacity) {
 async function start() {
   const [boundaries, totals, coverage] = await Promise.all([
     loadManifest().then(() => geoResponse('data/states.json')).then(r => r.json()), file('data/state_totals.csv'), json('data/coverage.json')]);
-  addRows(csv(totals), state.totals, row => row.state + '|' + row.candidate);
   state.coverage = coverage;
+  const totalRows = csv(totals);
+  setPhases(totalRows);
+  addRows(totalRows, state.totals, row => row.state + '|' + row.candidate);
   state.statesByCode = Object.fromEntries(boundaries.features.map(f => [f.properties.code, f.properties.name]));
   for (const [code, name] of Object.entries(state.statesByCode).sort((a, b) => a[1].localeCompare(b[1]))) {
     const label = document.createElement('label'), input = document.createElement('input');
@@ -1314,10 +1340,14 @@ function periodInput(which) {
   if (b <= a) { if (which === 'lo') a = b - 1; else b = a + 1; }
   $('period-lo').value = a; $('period-hi').value = b;
   state.span = [a, b];
+  syncPeriod();
+  refresh();
+}
+function syncPeriod() {
+  const [a, b] = state.span;
   $('period-value').textContent = periodLabel();
   $('period-fill').style.left = (100 * a / phases.length) + '%';
   $('period-fill').style.right = (100 * (phases.length - b) / phases.length) + '%';
-  refresh();
 }
 $('period-lo').addEventListener('input', () => periodInput('lo'));
 $('period-hi').addEventListener('input', () => periodInput('hi'));
