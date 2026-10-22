@@ -17,7 +17,8 @@
       1963451,
       1974751,
       1995596,
-      2022920
+      2022920,
+      2035077
     ],
     "C00901918": [
       1947090,
@@ -148,6 +149,14 @@
       "file_number": 2022920,
       "url": "https://docquery.fec.gov/csv/920/2022920.csv",
       "coverage_end": "2026-09-30",
+      "individual_rows": 0,
+      "itemized_cents": 0
+    },
+    {
+      "committee": "C00369033",
+      "file_number": 2035077,
+      "url": "https://docquery.fec.gov/csv/077/2035077.csv",
+      "coverage_end": "2026-10-14",
       "individual_rows": 0,
       "itemized_cents": 0
     },

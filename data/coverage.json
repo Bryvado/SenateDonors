@@ -1,8 +1,8 @@
 {
-  "retrieved": "2026-10-20",
+  "retrieved": "2026-10-22",
   "coverage_start": "2025-01-01",
-  "coverage_end": "2026-09-30",
-  "filing_count": 23,
+  "coverage_end": "2026-10-14",
+  "filing_count": 24,
   "source": "FEC electronic filings",
   "geography": "Reported contributor state and ZIP matched to 2020 Census ZCTA",
   "cd_vintage": "119th Congress districts (Census cb_2024_us_cd119_500k), as used by the HUD 06/2026 ZIP-CD crosswalk",
