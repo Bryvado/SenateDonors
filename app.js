@@ -161,12 +161,13 @@ function prefetchGeo(path) {
   openGeoCache().then(cache => cache && cache.match(geoUrl(path)).then(hit => hit || geoResponse(path).then(r => r.arrayBuffer()))).catch(() => {});
 }
 // Gzipped TopoJSON (or GeoJSON) -> GeoJSON FeatureCollection.
-async function packed(path) {
+async function unpacked(path) {
   const response = await geoResponse(path);
   if (!globalThis.DecompressionStream) throw new Error('This browser needs gzip stream support to display boundaries.');
-  const data = await new Response(response.body.pipeThrough(new DecompressionStream('gzip'))).json();
-  return data.type === 'Topology' ? topojson.feature(data, data.objects[Object.keys(data.objects)[0]]) : data;
+  return new Response(response.body.pipeThrough(new DecompressionStream('gzip'))).json();
 }
+const topoFeatures = (data) => data.type === 'Topology' ? topojson.feature(data, data.objects[Object.keys(data.objects)[0]]) : data;
+const packed = async (path) => topoFeatures(await unpacked(path));
 // Each item holds, per phase, [dollars, net dollars, count, dollars placed by address, count placed by
 // address] (area levels only), and in .max the max-out donors per election [in one gift, accumulated, over-limit gifts].
 function itemFor(store, id) {
@@ -1278,7 +1279,8 @@ function exportOptions() {
   return {level, scope: level === 'state' || $('export-scope').value === 'all' || !state.selected.length ? 'all' : 'open',
     period: $('export-period').value, formats: [...document.querySelectorAll('[name=export-format]:checked')].map(i => i.value),
     maxouts: $('export-maxouts').checked, population: $('export-population').checked, empty: $('export-empty').checked,
-    unallocated: $('export-unallocated').checked && level !== 'state' && level !== 'zcta', zip: $('export-zip').checked};
+    unallocated: $('export-unallocated').checked && level !== 'state' && level !== 'zcta', zip: $('export-zip').checked,
+    simplify: level === 'zcta' && $('export-simplify').checked, crs: $('export-crs').value};
 }
 // Opening the panel starts from what the map shows.
 function openExport() {
@@ -1290,6 +1292,8 @@ function updateExport() {
   if ($('export').hidden) return;
   const o = exportOptions(), heavy = levels[o.level].detail && o.scope === 'all';
   $('export-scope').disabled = o.level === 'state';
+  $('export-simplify-row').style.display = o.level === 'zcta' ? '' : 'none';
+  $('export-crs-row').style.display = o.formats.includes('geojson') ? '' : 'none';
   $('export-scope').querySelector('[value=open]').textContent = state.selected.length ? `Open states (${state.selected.join(', ')})` : 'Open states (none open)';
   $('export-period').querySelector('[value=span]').textContent = `Current period (${periodLabel()})`;
   $('export-go').disabled = !o.formats.length || exporting;
@@ -1354,7 +1358,8 @@ async function exportPlaces(o, wantGeo, status) {
     const geo = new Map();
     if (wantGeo) {
       let done = 0;
-      await Promise.all(codes.map(code => stateFile('zcta', code).catch(() => []).then(list => {
+      const load = o.simplify ? (code => simplifiedZctas(code)) : (code => stateFile('zcta', code));
+      await Promise.all(codes.map(code => load(code).catch(() => []).then(list => {
         status(`Loading boundaries ${++done}/${codes.length}…`);
         for (const f of list) geo.set(code + '|' + f.properties.zip, f.geometry);
       })));
@@ -1407,6 +1412,120 @@ function exportRows(places, o) {
   }
   return rows;
 }
+/* Coordinate systems for exported boundaries. Albers equal-area conic on the GRS80 ellipsoid (Snyder,
+   Map Projections: A Working Manual, eqs. 14-1 to 14-12); NAD83 is taken as WGS 84 (they differ by about
+   a meter, below the 11 m precision of the boundary files). Projected coordinates are rounded to 1 m. */
+function albers({lat1, lat2, lat0, lon0, x0 = 0, y0 = 0}) {
+  const a = 6378137, f = 1 / 298.257222101, e2 = f * (2 - f), e = Math.sqrt(e2), rad = Math.PI / 180;
+  const q = (phi) => { const s = Math.sin(phi); return (1 - e2) * (s / (1 - e2 * s * s) - Math.log((1 - e * s) / (1 + e * s)) / (2 * e)); };
+  const m = (phi) => Math.cos(phi) / Math.sqrt(1 - e2 * Math.sin(phi) ** 2);
+  const m1 = m(lat1 * rad), m2 = m(lat2 * rad), q1 = q(lat1 * rad), q2 = q(lat2 * rad);
+  const n = (m1 * m1 - m2 * m2) / (q2 - q1), C = m1 * m1 + n * q1, rho0 = a * Math.sqrt(C - n * q(lat0 * rad)) / n;
+  return ([lon, lat]) => {
+    const rho = a * Math.sqrt(C - n * q(lat * rad)) / n, theta = n * (lon - lon0) * rad;
+    return [x0 + rho * Math.sin(theta), y0 + rho0 - rho * Math.cos(theta)];
+  };
+}
+const EXPORT_CRS = {
+  conus: {epsg: 5070, project: albers({lat1: 29.5, lat2: 45.5, lat0: 23, lon0: -96})},
+  texas: {epsg: 3083, project: albers({lat1: 27.5, lat2: 35, lat0: 18, lon0: -100, x0: 1500000, y0: 6000000})},
+  mercator: {epsg: 3857, project: ([lon, lat]) => [6378137 * lon * Math.PI / 180, 6378137 * Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360))]},
+  wgs84: {epsg: 4326, project: null},
+};
+const ALASKA = albers({lat1: 55, lat2: 65, lat0: 50, lon0: -154});   // EPSG:3338, for simplifying Alaska
+
+/* Light simplification for exported ZCTAs. The shared arcs of the TopoJSON file are simplified once
+   each (Douglas-Peucker, ends fixed), so neighbouring ZCTAs keep one common edge and no gaps or slivers
+   open between them. Distances are measured in projected meters, as build_geometry.py does: Conus Albers,
+   Alaska Albers for Alaska, and a local equirectangular projection for Hawaii and the territories. Closed
+   arcs (islands, ZCTAs with no neighbour) keep at least three points. The map itself keeps the full files. */
+const EXPORT_SIMPLIFY_M = 40;
+async function simplifiedZctas(code) {
+  const topo = await unpacked(statePath('zcta', code));
+  if (topo.type !== 'Topology') return tag(topo.features, code);
+  const [kx, ky] = topo.transform?.scale || [1, 1], [x0, y0] = topo.transform?.translate || [0, 0];
+  const original = topo.arcs.map(arc => {
+    let x = 0, y = 0;
+    return arc.map(([dx, dy]) => (topo.transform ? (x += dx, y += dy, [x * kx + x0, y * ky + y0]) : [dx, dy]));
+  });
+  const project = code === 'AK' ? ALASKA : ['HI', 'PR', 'VI', 'GU', 'MP', 'AS'].includes(code) ? null : EXPORT_CRS.conus.project;
+  topo.arcs = original.map(points => simplifyArc(points, EXPORT_SIMPLIFY_M, project));
+  // An arc simplified on its own can cross a neighbouring edge in a narrow spot; those arcs keep their
+  // original points (repeated, since a restored arc can meet another simplified one).
+  for (let round = 0; round < 4; round++) {
+    const bad = crossingArcs(topo.arcs, topo.arcs.map((a, i) => a !== original[i]));
+    if (!bad.size) break;
+    for (const i of bad) topo.arcs[i] = original[i];
+  }
+  delete topo.transform;
+  return tag(topoFeatures(topo).features, code);
+}
+// Indexes of simplified arcs with a segment that crosses another segment (endpoints shared at junctions
+// and consecutive segments of one arc don't count). Segments are bucketed in a grid of ~1 km cells.
+function crossingArcs(arcs, simplified) {
+  const CELL = .01, grid = new Map(), bad = new Set();
+  const orient = (a, b, c) => Math.sign((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]));
+  const same = (p, q) => p[0] === q[0] && p[1] === q[1];
+  const cross = (a, b, c, d) => {
+    if (same(a, c) || same(a, d) || same(b, c) || same(b, d)) return false;
+    const o1 = orient(a, b, c), o2 = orient(a, b, d), o3 = orient(c, d, a), o4 = orient(c, d, b);
+    return o1 * o2 < 0 && o3 * o4 < 0;
+  };
+  arcs.forEach((arc, i) => {
+    for (let k = 0; k + 1 < arc.length; k++) {
+      const [a, b] = [arc[k], arc[k + 1]];
+      const cx0 = Math.floor(Math.min(a[0], b[0]) / CELL), cx1 = Math.floor(Math.max(a[0], b[0]) / CELL);
+      const cy0 = Math.floor(Math.min(a[1], b[1]) / CELL), cy1 = Math.floor(Math.max(a[1], b[1]) / CELL);
+      for (let cx = cx0; cx <= cx1; cx++) for (let cy = cy0; cy <= cy1; cy++) {
+        const key = cx * 100003 + cy, list = grid.get(key);
+        if (!list) { grid.set(key, [[i, k]]); continue; }
+        for (const [j, m] of list) {
+          if (!simplified[i] && !simplified[j]) continue;
+          if (i === j && Math.abs(k - m) < 2) continue;
+          if (cross(a, b, arcs[j][m], arcs[j][m + 1])) { if (simplified[i]) bad.add(i); if (simplified[j]) bad.add(j); }
+        }
+        list.push([i, k]);
+      }
+    }
+  });
+  return bad;
+}
+function simplifyArc(points, meters, project) {
+  if (points.length < 4) return points;
+  // Distances in projected meters; without a projection, local equirectangular meters around the arc.
+  const lat = points[0][1] * Math.PI / 180, local = ([x, y]) => [x * 111320 * Math.cos(lat), y * 110540];
+  const xy = points.map(project || local), tol2 = meters * meters;
+  const keep = new Uint8Array(points.length);
+  const far = (a, b) => {
+    const [ax, ay] = xy[a], ux = xy[b][0] - ax, uy = xy[b][1] - ay, len2 = ux * ux + uy * uy;
+    let best = -1, index = -1;
+    for (let i = a + 1; i < b; i++) {
+      const px = xy[i][0] - ax, py = xy[i][1] - ay;
+      const t = len2 ? Math.max(0, Math.min(1, (px * ux + py * uy) / len2)) : 0, ex = px - t * ux, ey = py - t * uy, d = ex * ex + ey * ey;
+      if (d > best) { best = d; index = i; }
+    }
+    return [index, best];
+  };
+  const run = (a, b) => {
+    const stack = [[a, b]];
+    while (stack.length) {
+      const [i, j] = stack.pop();
+      if (j - i < 2) continue;
+      const [k, d] = far(i, j);
+      if (d > tol2) { keep[k] = 1; stack.push([i, k], [k, j]); }
+    }
+  };
+  const last = points.length - 1;
+  keep[0] = keep[last] = 1;
+  const closed = points[0][0] === points[last][0] && points[0][1] === points[last][1];
+  if (closed) {
+    // Split a ring at its farthest point from the start, and keep a third point so it never collapses.
+    const [k] = far(0, last), [m] = k > 1 ? far(0, k) : far(k, last);
+    keep[k] = 1; if (m > 0) keep[m] = 1;
+    run(0, k); run(k, last);
+  } else run(0, last);
+  return points.filter((_, i) => keep[i]);
+}
 const delimited = (rows, sep) => {
   if (!rows.length) return '';
   const head = Object.keys(rows[0].row), cell = (v) => {
@@ -1416,13 +1535,16 @@ const delimited = (rows, sep) => {
   return [head.join(sep), ...rows.map(r => head.map(h => cell(r.row[h])).join(sep))].join('\r\n') + '\r\n';
 };
 const roundCoords = (c) => typeof c[0] === 'number' ? [Math.round(c[0] * 1e4) / 1e4, Math.round(c[1] * 1e4) / 1e4] : c.map(roundCoords);
+const projectCoords = (c, project) => typeof c[0] === 'number' ? project(c).map(Math.round) : c.map(p => projectCoords(p, project));
 // Large layers are written in pieces so no single string holds a whole nationwide file.
-function geojsonParts(rows) {
-  const parts = ['{"type":"FeatureCollection","features":['];
+function geojsonParts(rows, crs) {
+  const project = EXPORT_CRS[crs].project, coords = project ? (c) => projectCoords(c, project) : roundCoords;
+  // RFC 7946 GeoJSON is longitude/latitude; projected files carry the older named-CRS member, which QGIS and GDAL read.
+  const parts = [project ? `{"type":"FeatureCollection","crs":{"type":"name","properties":{"name":"urn:ogc:def:crs:EPSG::${EXPORT_CRS[crs].epsg}"}},"features":[` : '{"type":"FeatureCollection","features":['];
   let first = true;
   for (const r of rows) {
     if (!r.geometry) continue;
-    parts.push((first ? '' : ',') + JSON.stringify({type: 'Feature', properties: r.row, geometry: {type: r.geometry.type, coordinates: roundCoords(r.geometry.coordinates)}}));
+    parts.push((first ? '' : ',') + JSON.stringify({type: 'Feature', properties: r.row, geometry: {type: r.geometry.type, coordinates: coords(r.geometry.coordinates)}}));
     first = false;
   }
   parts.push(']}');
@@ -1490,6 +1612,9 @@ function exportReadme(o, rows, fileNames) {
     o.maxouts && o.period === 'span' ? '  <candidate>_maxout_*: donors who reached the $3,500 per-election limit, summed over the primary, runoff and general (a donor maxing out in two elections counts twice); single_gift = in one gift, accumulated = over several. Not split by period.' : '',
     o.unallocated ? '  Unallocated rows (blank geoid): dollars whose ZIP falls in non-metro territory or other placeholder areas, by the donor\'s reported state. Tables only.' : '',
     '', 'Boundaries (GeoJSON, KML): 2020 Census ZCTAs; cb_2024 counties, 119th Congress districts and CBSAs; cb_2022 county subdivisions; simplified for web display, coordinates rounded to 4 decimals (about 11 m).',
+    o.formats.includes('geojson') ? `GeoJSON coordinates: ${{conus: 'NAD83 / Conus Albers (EPSG:5070), meters', texas: 'NAD83 / Texas Centric Albers Equal Area (EPSG:3083), meters', mercator: 'WGS 84 / Pseudo-Mercator (EPSG:3857), meters', wgs84: 'WGS 84 longitude/latitude (EPSG:4326)'}[o.crs]}` +
+      (o.crs === 'wgs84' ? '.' : ', rounded to 1 m, with the CRS named in the file (urn:ogc:def:crs:EPSG). KML is always longitude/latitude, as the format requires.') : '',
+    o.simplify ? `ZCTA boundaries were simplified further for this export (Douglas-Peucker, ${EXPORT_SIMPLIFY_M} m measured in Albers equal-area meters, on shared edges, so neighbouring ZCTAs still meet without gaps; an edge that would cross another keeps its full detail).` : '',
     'Unitemized contributions (generally $200 or less per donor per election) are not included.'].filter(s => s !== '').join('\r\n') + '\r\n';
 }
 function save(blob, name) {
@@ -1515,7 +1640,7 @@ async function runExport() {
       f === 'csv' ? [delimited(tables, ',')] : f === 'tsv' ? [delimited(tables, '\t')] :
       f === 'json' ? [JSON.stringify({source: 'https://bryvado.github.io/SenateDonors/', coverage: state.coverage && {start: state.coverage.coverage_start, end: state.coverage.coverage_end, retrieved: state.coverage.retrieved},
         level: o.level, period: o.period === 'span' ? periodLabel() : 'by-period', rows: tables.map(r => r.row)})] :
-      f === 'geojson' ? geojsonParts(shapes) : kmlParts(shapes, title)}));
+      f === 'geojson' ? geojsonParts(shapes, o.crs) : kmlParts(shapes, title)}));
     if (files.length > 1 || o.zip) {
       files.push({name: 'README.txt', parts: [exportReadme(o, rows, files.map(f => f.name))]});
       save(zipBlob(files), stem + '.zip');

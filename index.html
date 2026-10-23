@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="style.css?v=27">
   <script defer src="vendor/leaflet.js"></script>
   <script defer src="vendor/topojson-client.min.js"></script>
-  <script defer src="app.js?v=30"></script>
+  <script defer src="app.js?v=31"></script>
 </head>
 <body>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -130,12 +130,14 @@
         <label class="check"><input type="checkbox" name="export-format" value="tsv"> TSV (tab-separated)</label>
         <label class="check"><input type="checkbox" name="export-format" value="json"> JSON</label>
         <label class="check"><input type="checkbox" name="export-format" value="geojson"> GeoJSON with boundaries</label>
-        <label class="check"><input type="checkbox" name="export-format" value="kml"> KML with boundaries (Google Earth)</label>
+        <label class="check"><input type="checkbox" name="export-format" value="kml"> KML with boundaries (Google Earth; always longitude/latitude)</label>
       </fieldset>
+      <label class="rank-by" id="export-crs-row">Coordinates <select id="export-crs"><option value="conus">Conus Albers, meters (EPSG:5070)</option><option value="texas">Texas Centric Albers, meters (EPSG:3083)</option><option value="mercator">Web Mercator, meters (EPSG:3857)</option><option value="wgs84">Longitude/latitude (WGS 84)</option></select></label>
       <fieldset class="export-set"><legend>Include</legend>
         <label class="check"><input type="checkbox" id="export-maxouts" checked> Max-out donors (all elections; current-period rows only)</label>
         <label class="check"><input type="checkbox" id="export-population" checked> Population and dollars per 100 residents</label>
         <label class="check"><input type="checkbox" id="export-empty"> Places with no receipts</label>
+        <label class="check" id="export-simplify-row"><input type="checkbox" id="export-simplify" checked> Simplify ZIP boundaries lightly (about 40 m, roughly a quarter smaller; shared edges stay matched)</label>
         <label class="check"><input type="checkbox" id="export-unallocated" checked> Unallocated dollars (tables only)</label>
         <label class="check"><input type="checkbox" id="export-zip" checked> Bundle as .zip with a README (always on for more than one format)</label>
       </fieldset>
