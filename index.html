@@ -6,10 +6,10 @@
   <meta name="theme-color" content="#0f151a">
   <title>Senate donors · FEC ZIP map</title>
   <link rel="stylesheet" href="vendor/leaflet.css">
-  <link rel="stylesheet" href="style.css?v=26">
+  <link rel="stylesheet" href="style.css?v=27">
   <script defer src="vendor/leaflet.js"></script>
   <script defer src="vendor/topojson-client.min.js"></script>
-  <script defer src="app.js?v=29"></script>
+  <script defer src="app.js?v=30"></script>
 </head>
 <body>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -74,6 +74,7 @@
     <button data-panel="rank" aria-pressed="false" title="Top places in view"><span aria-hidden="true">≡</span>Top places</button>
     <button data-panel="donors" aria-pressed="false" title="Where each candidate's money comes from"><span aria-hidden="true">◔</span>Donor map</button>
     <button data-panel="filter" aria-pressed="false" title="Keep only places within a range"><span aria-hidden="true">⧩</span>Filter</button>
+    <button data-panel="export" aria-pressed="false" title="Download the data behind the map"><span aria-hidden="true">⇩</span>Export</button>
     <button data-panel="timeline" id="launch-timeline" aria-pressed="false" disabled title="Play the race month by month"><span aria-hidden="true">▶</span>Timeline</button>
   </nav>
   <aside class="side panel float" id="side" aria-label="Totals">
@@ -117,6 +118,30 @@
   <aside class="donors panel float" id="donors" hidden aria-label="Where the money comes from">
     <div class="float-head"><span class="grip" aria-hidden="true">⠿</span><span class="float-title">Where the money comes from · <span id="donors-period"></span></span><button class="float-close head-btn" aria-label="Close donor map">×</button></div>
     <div class="float-body" id="donors-body"></div>
+  </aside>
+  <aside class="export panel float" id="export" hidden aria-label="Export data">
+    <div class="float-head"><span class="grip" aria-hidden="true">⠿</span><span class="float-title">Export data</span><button class="float-close head-btn" aria-label="Close export">×</button></div>
+    <div class="float-body">
+      <label class="rank-by">Level <select id="export-level"><option value="state">States</option><option value="zcta">ZIP (ZCTA)</option><option value="county">Counties</option><option value="cd">Congressional districts</option><option value="cbsa">Metro/micro areas</option><option value="cousub">County subdivisions</option></select></label>
+      <label class="rank-by">Places <select id="export-scope"><option value="open">Open states</option><option value="all">All states (nationwide)</option></select></label>
+      <label class="rank-by">Period <select id="export-period"><option value="span">Current period</option><option value="each">Every period (one row per place and period)</option></select></label>
+      <fieldset class="export-set"><legend>Formats</legend>
+        <label class="check"><input type="checkbox" name="export-format" value="csv" checked> CSV</label>
+        <label class="check"><input type="checkbox" name="export-format" value="tsv"> TSV (tab-separated)</label>
+        <label class="check"><input type="checkbox" name="export-format" value="json"> JSON</label>
+        <label class="check"><input type="checkbox" name="export-format" value="geojson"> GeoJSON with boundaries</label>
+        <label class="check"><input type="checkbox" name="export-format" value="kml"> KML with boundaries (Google Earth)</label>
+      </fieldset>
+      <fieldset class="export-set"><legend>Include</legend>
+        <label class="check"><input type="checkbox" id="export-maxouts" checked> Max-out donors (all elections; current-period rows only)</label>
+        <label class="check"><input type="checkbox" id="export-population" checked> Population and dollars per 100 residents</label>
+        <label class="check"><input type="checkbox" id="export-empty"> Places with no receipts</label>
+        <label class="check"><input type="checkbox" id="export-unallocated" checked> Unallocated dollars (tables only)</label>
+        <label class="check"><input type="checkbox" id="export-zip" checked> Bundle as .zip with a README (always on for more than one format)</label>
+      </fieldset>
+      <div class="export-actions"><button id="export-go" class="export-go">Download</button><span id="export-status" class="hint" role="status"></span></div>
+      <p class="hint" id="export-note"></p>
+    </div>
   </aside>
   <aside class="timeline panel float" id="timeline" hidden aria-label="Timeline">
     <div class="float-head"><span class="grip" aria-hidden="true">⠿</span><span class="float-title">Timeline</span><button class="float-close head-btn" aria-label="Close timeline">×</button></div>
