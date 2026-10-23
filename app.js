@@ -30,8 +30,13 @@ function setPhases(rows) {
   syncPeriod();
 }
 const dayLabel = (day) => new Date(day + 'T12:00:00Z').toLocaleDateString('en-US', {month: 'short', day: 'numeric', timeZone: 'UTC'});
-// The last phase runs to the latest coverage date (older data has no quarters, so "post_runoff" is open-ended).
-const phaseEnd = (k) => k === phases.length - 1 && state.coverage?.coverage_end ? state.coverage.coverage_end : phaseDays(phases[k])[1];
+// A quarter ends at its last day or the latest coverage date, whichever is earlier (a filing can run past the
+// quarter with no receipts in it). Older data has no quarters, so there "post_runoff" runs to the coverage date.
+function phaseEnd(k) {
+  const end = phaseDays(phases[k])[1], covered = state.coverage?.coverage_end;
+  if (k !== phases.length - 1 || !covered) return end;
+  return phases.length === Object.keys(PHASE_DAYS).length ? covered : covered < end ? covered : end;
+}
 const phaseMonths = (phase) => { const k = phases.indexOf(phase), [a] = phaseDays(phase); return [a.slice(0, 7), k === phases.length - 1 ? '9999-12' : phaseDays(phase)[1].slice(0, 7)]; };
 function periodLabel() {
   const [a, b] = state.span;
@@ -417,6 +422,10 @@ async function cached(key, load) {
   state.geo.set(key, entry);
   return entry;
 }
+function geoOnScreen() {
+  const level = state.layer?.level || state.level, codes = detailNation() ? visibleDetailCodes() : state.selected;
+  return new Set(levels[level].detail ? codes.map(code => level + '|' + code) : [level]);
+}
 function trimGeo(inUse) {
   let spare = [...state.geo.keys()].filter(key => !inUse.has(key));
   while (spare.length > GEO_KEEP) state.geo.delete(spare.shift());
@@ -557,8 +566,7 @@ async function render(fit = false) {
     }
   } catch (error) { showError(error); if (progress.token === token) $('progress').hidden = true; }
   if (token === state.render) {
-    const codes = detailNation() ? visibleDetailCodes() : state.selected;
-    trimGeo(new Set(levels[level].detail ? codes.map(code => level + '|' + code) : [level]));
+    trimGeo(geoOnScreen());
     updateScope(); refresh();
   }
 }
@@ -1236,8 +1244,8 @@ function placeFree(panel) {
 }
 let z = 1010;
 const front = (panel) => { panel.style.zIndex = ++z; };
-const PANELS = ['side', 'rank', 'donors', 'timeline', 'filter', 'splom'];
-const redraw = (id) => ({side: updatePanel, rank: updateRank, donors: updateDonors, timeline: updateTimeline, filter: updateFilter, splom: updateSplom})[id]?.();
+const PANELS = ['side', 'rank', 'donors', 'timeline', 'filter', 'splom', 'export'];
+const redraw = (id) => ({side: updatePanel, rank: updateRank, donors: updateDonors, timeline: updateTimeline, filter: updateFilter, splom: updateSplom, export: updateExport})[id]?.();
 function openPanel(id, open) {
   const panel = $(id);
   if (open && window.innerWidth <= 850) for (const other of PANELS) if (other !== id && !$(other).hidden) openPanel(other, false);
@@ -1252,11 +1260,281 @@ function openPanel(id, open) {
     front(panel);
     if (id === 'filter' && window.innerWidth > 850) setTimeout(() => openPanel('splom', true));
     if (id === 'rank') loadLevel(state.level).then(updateRank, showError);
+    if (id === 'export') openExport();
     redraw(id);
     placeFree(panel);
     redraw(id);
   }
 }
+
+/* Export: the aggregates behind the map for one level, as CSV, TSV, JSON, GeoJSON or KML, bundled in a
+   .zip with a README when asked (or when more than one format is chosen). Built in the browser from the
+   same files the map loads; nothing row-level exists to export. */
+const EXPORT_FORMATS = {csv: 'CSV', tsv: 'TSV', json: 'JSON', geojson: 'GeoJSON', kml: 'KML'};
+const GEO_FORMATS = ['geojson', 'kml'];
+let exporting = false;
+function exportOptions() {
+  const level = $('export-level').value;
+  return {level, scope: level === 'state' || $('export-scope').value === 'all' || !state.selected.length ? 'all' : 'open',
+    period: $('export-period').value, formats: [...document.querySelectorAll('[name=export-format]:checked')].map(i => i.value),
+    maxouts: $('export-maxouts').checked, population: $('export-population').checked, empty: $('export-empty').checked,
+    unallocated: $('export-unallocated').checked && level !== 'state' && level !== 'zcta', zip: $('export-zip').checked};
+}
+// Opening the panel starts from what the map shows.
+function openExport() {
+  $('export-level').value = state.layer && (state.selected.length || state.nationwide) ? state.layer.level : 'state';
+  $('export-scope').value = state.nationwide || !state.selected.length ? 'all' : 'open';
+  updateExport();
+}
+function updateExport() {
+  if ($('export').hidden) return;
+  const o = exportOptions(), heavy = levels[o.level].detail && o.scope === 'all';
+  $('export-scope').disabled = o.level === 'state';
+  $('export-scope').querySelector('[value=open]').textContent = state.selected.length ? `Open states (${state.selected.join(', ')})` : 'Open states (none open)';
+  $('export-period').querySelector('[value=span]').textContent = `Current period (${periodLabel()})`;
+  $('export-go').disabled = !o.formats.length || exporting;
+  $('export-note').textContent = [
+    !o.formats.length ? 'Choose at least one format.' : '',
+    heavy && (o.formats.some(f => GEO_FORMATS.includes(f)) || o.level === 'cousub') ? `Nationwide ${levels[o.level].label} read every state's boundary file; the download can take a minute and run to tens of megabytes.` : '',
+    o.level === 'zcta' ? 'ZIP rows cover every reported ZIP; ZIPs without a matching ZCTA have no boundary in GeoJSON or KML.' : '',
+    o.level !== 'state' && o.level !== 'zcta' ? 'Area dollars are placed by street address where it geocoded and split by the HUD ZIP crosswalk otherwise, so counts can be fractional.' : '',
+    'Dollars are itemized contributions from individuals; no individual records are included.'].filter(Boolean).join(' ');
+}
+const slugName = (c) => names[c].toLowerCase();
+const round2 = (n) => Math.round(n * 100) / 100;
+// One row per place (and period): candidate columns for all three candidates.
+function exportRow(base, item, phaseList, o, pop, level) {
+  const row = {...base}, area = level !== 'state' && level !== 'zcta';
+  if (o.population) row.population = pop ?? '';
+  let total = 0;
+  for (const c of order) {
+    const sums = phaseList.reduce((sum, phase) => sum.map((n, i) => n + (item?.[c]?.[phase]?.[i] || 0)), [0, 0, 0, 0, 0]);
+    row[slugName(c) + '_dollars'] = round2(sums[0]);
+    row[slugName(c) + '_net_dollars'] = round2(sums[1]);
+    row[slugName(c) + '_contributions'] = round2(sums[2]);
+    if (area) row[slugName(c) + '_dollars_by_address'] = round2(sums[3]);
+    total += sums[0];
+  }
+  row.total_dollars = round2(total);
+  if (o.population) row.dollars_per_100_residents = pop ? round2(100 * total / pop) : '';
+  if (o.maxouts && o.period === 'span') {
+    for (const c of order) {
+      let single = 0, accumulated = 0;
+      for (const e of elections) { const m = item?.[c]?.max?.[e]; if (m) { single += m[0]; accumulated += m[1]; } }
+      row[slugName(c) + '_maxout_donors'] = round2(single + accumulated);
+      row[slugName(c) + '_maxout_single_gift'] = round2(single);
+      row[slugName(c) + '_maxout_accumulated'] = round2(accumulated);
+    }
+  }
+  return {row, total};
+}
+// Items by place: {committee: store item}.
+function byPlace(store, keyOf) {
+  const out = new Map();
+  for (const [key, item] of store) {
+    const cut = key.lastIndexOf('|'), place = key.slice(0, cut), c = key.slice(cut + 1);
+    if (!keyOf || keyOf(place)) (out.get(place) || out.set(place, {}).get(place))[c] = item;
+  }
+  return out;
+}
+async function exportPlaces(o, wantGeo, status) {
+  const codes = o.scope === 'all' ? Object.keys(state.statesByCode) : [...state.selected], inScope = new Set(codes);
+  const places = [];   // {base, item, pop, geometry}
+  if (o.level === 'state') {
+    if (o.population) await loadPopulation('state');
+    const items = byPlace(state.totals), geo = new Map(state.states.getLayers().map(l => [l.feature.properties.code, l.feature.geometry]));
+    for (const [code, item] of items) places.push({base: {geoid: code, name: state.statesByCode[code] || code, state: code}, item, pop: population('state', code), geometry: geo.get(code)});
+    return places;
+  }
+  status('Loading data…');
+  await loadLevel(o.level);
+  if (o.population) await loadPopulation(o.level);
+  if (o.level === 'zcta') {
+    await state.maxLoaded;
+    const geo = new Map();
+    if (wantGeo) {
+      let done = 0;
+      await Promise.all(codes.map(code => stateFile('zcta', code).catch(() => []).then(list => {
+        status(`Loading boundaries ${++done}/${codes.length}…`);
+        for (const f of list) geo.set(code + '|' + f.properties.zip, f.geometry);
+      })));
+    }
+    for (const [key, item] of byPlace(state.receipts, place => inScope.has(place.slice(0, 2)))) {
+      const [code, zip] = key.split('|');
+      places.push({base: {geoid: zip, name: `ZIP ${zip}`, state: code}, item, pop: population('zcta', zip), geometry: geo.get(key)});
+    }
+    const have = new Set(places.map(p => p.base.state + '|' + p.base.geoid));
+    if (o.empty) for (const [key, geometry] of geo) if (!have.has(key)) {
+      const [code, zip] = key.split('|');
+      places.push({base: {geoid: zip, name: `ZIP ${zip}`, state: code}, item: {}, pop: population('zcta', zip), geometry});
+    }
+    return places;
+  }
+  // Area levels: names and states come from the boundary files.
+  let list;
+  if (!levels[o.level].detail) {
+    status('Loading boundaries…');
+    list = (await cached(o.level, () => packed(`data/levels/geo/${o.level}.bin`))).features.filter(f => f.properties.states.some(s => inScope.has(s)));
+  } else {
+    let done = 0;
+    list = (await Promise.all(codes.map(code => stateFile(o.level, code).catch(() => []).then(found => { status(`Loading boundaries ${++done}/${codes.length}…`); return found; })))).flat();
+  }
+  const items = byPlace(state.areas[o.level]), seen = new Set();
+  for (const f of list) {
+    const p = f.properties;
+    if (seen.has(p.geoid)) continue;
+    seen.add(p.geoid);
+    places.push({base: {geoid: p.geoid, name: p.name, state: (p.states || [p._state]).join(' ')}, item: items.get(p.geoid) || {}, pop: population(o.level, p.geoid), geometry: f.geometry});
+  }
+  if (o.unallocated) {
+    for (const [key, item] of byPlace(state.unallocated, place => place.startsWith(o.level + '|') && inScope.has(place.split('|')[1]))) {
+      const code = key.split('|')[1];
+      places.push({base: {geoid: '', name: `Unallocated (${code})`, state: code}, item, unallocated: true});
+    }
+  }
+  return places;
+}
+function exportRows(places, o) {
+  const spans = o.period === 'span' ? [[periodLabel(), phases.slice(...state.span)]]
+    : phases.map((p, k) => [k === 0 ? 'Through ' + dayLabel(phaseEnd(k)) : dayLabel(phaseDays(p)[0]) + ' – ' + dayLabel(phaseEnd(k)), [p]]);
+  const rows = [];
+  for (const place of places) {
+    for (const [label, list] of spans) {
+      const base = o.period === 'each' ? {...place.base, period: label, period_key: list[0]} : place.base;
+      const {row, total} = exportRow(base, place.item, list, o, place.pop, o.level);
+      if (total > 0 || o.empty || (o.maxouts && o.period === 'span' && order.some(c => row[slugName(c) + '_maxout_donors'] > 0))) rows.push({row, geometry: place.geometry, unallocated: place.unallocated});
+    }
+  }
+  return rows;
+}
+const delimited = (rows, sep) => {
+  if (!rows.length) return '';
+  const head = Object.keys(rows[0].row), cell = (v) => {
+    const s = String(v ?? '');
+    return sep === '\t' ? s.replace(/[\t\r\n]/g, ' ') : /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  return [head.join(sep), ...rows.map(r => head.map(h => cell(r.row[h])).join(sep))].join('\r\n') + '\r\n';
+};
+const roundCoords = (c) => typeof c[0] === 'number' ? [Math.round(c[0] * 1e4) / 1e4, Math.round(c[1] * 1e4) / 1e4] : c.map(roundCoords);
+// Large layers are written in pieces so no single string holds a whole nationwide file.
+function geojsonParts(rows) {
+  const parts = ['{"type":"FeatureCollection","features":['];
+  let first = true;
+  for (const r of rows) {
+    if (!r.geometry) continue;
+    parts.push((first ? '' : ',') + JSON.stringify({type: 'Feature', properties: r.row, geometry: {type: r.geometry.type, coordinates: roundCoords(r.geometry.coordinates)}}));
+    first = false;
+  }
+  parts.push(']}');
+  return parts;
+}
+const xml = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+function kmlParts(rows, title) {
+  const ring = (r) => roundCoords(r).map(p => p[0] + ',' + p[1]).join(' ');
+  const polygon = (rings) => '<Polygon><outerBoundaryIs><LinearRing><coordinates>' + ring(rings[0]) + '</coordinates></LinearRing></outerBoundaryIs>' +
+    rings.slice(1).map(r => '<innerBoundaryIs><LinearRing><coordinates>' + ring(r) + '</coordinates></LinearRing></innerBoundaryIs>').join('') + '</Polygon>';
+  const parts = [`<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${xml(title)}</name>`];
+  for (const r of rows) {
+    if (!r.geometry) continue;
+    const polys = r.geometry.type === 'Polygon' ? [r.geometry.coordinates] : r.geometry.coordinates;
+    parts.push(`<Placemark><name>${xml(r.row.name)}</name><ExtendedData>` +
+      Object.entries(r.row).map(([k, v]) => `<Data name="${xml(k)}"><value>${xml(v)}</value></Data>`).join('') +
+      `</ExtendedData><MultiGeometry>${polys.map(polygon).join('')}</MultiGeometry></Placemark>\n`);
+  }
+  parts.push('</Document></kml>');
+  return parts;
+}
+// A stored (uncompressed) zip: no library, and the formats inside are already plain text.
+const CRC_TABLE = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function zipBlob(files) {
+  const out = [], central = [], encoder = new TextEncoder(), now = new Date();
+  const time = (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1), date = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+  let offset = 0;
+  for (const {name, parts} of files) {
+    const chunks = parts.map(p => encoder.encode(p)), nameBytes = encoder.encode(name);
+    let crc = 0xffffffff, size = 0;
+    for (const chunk of chunks) { size += chunk.length; for (let i = 0; i < chunk.length; i++) crc = CRC_TABLE[(crc ^ chunk[i]) & 0xff] ^ (crc >>> 8); }
+    crc = (crc ^ 0xffffffff) >>> 0;
+    const header = (sig, extra) => {
+      const b = new DataView(new ArrayBuffer(extra ? 46 : 30));
+      let i = 0; const u32 = (v) => { b.setUint32(i, v, true); i += 4; }, u16 = (v) => { b.setUint16(i, v, true); i += 2; };
+      u32(sig); if (extra) u16(20); u16(20); u16(0x0800); u16(0); u16(time); u16(date); u32(crc); u32(size); u32(size); u16(nameBytes.length); u16(0);
+      if (extra) { u16(0); u16(0); u16(0); u32(0); u32(offset); }
+      return b.buffer;
+    };
+    const local = header(0x04034b50, false);
+    central.push(header(0x02014b50, true), nameBytes);
+    out.push(local, nameBytes, ...chunks);
+    offset += 30 + nameBytes.length + size;
+  }
+  const centralSize = central.reduce((n, p) => n + p.byteLength, 0), end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true); end.setUint16(8, files.length, true); end.setUint16(10, files.length, true);
+  end.setUint32(12, centralSize, true); end.setUint32(16, offset, true);
+  return new Blob([...out, ...central, end.buffer], {type: 'application/zip'});
+}
+function exportReadme(o, rows, fileNames) {
+  const c = state.coverage || {};
+  return [`Senate Donors data export (${new Date().toISOString().slice(0, 10)})`, '',
+    `Map: https://bryvado.github.io/SenateDonors/`,
+    `Source: FEC electronic filings of the principal campaign committees of ${order.map(k => names[k]).join(', ')} (2026 Texas U.S. Senate), ` +
+      `itemized contributions from individuals, ${c.coverage_start || ''} through ${c.coverage_end || ''} (${c.filing_count || '?'} filings, retrieved ${c.retrieved || '?'}).`,
+    `Level: ${levels[o.level].title}. Places: ${o.scope === 'all' ? 'all states' : state.selected.join(', ')}. ` +
+      `Period: ${o.period === 'span' ? periodLabel() : 'every period, one row per place and period'}. Rows: ${rows.length}.`,
+    `Files: ${fileNames.join(', ')}`, '',
+    'Columns',
+    '  geoid, name, state: place identifiers (Census GEOID; ZIP code at the ZIP level; USPS state codes, several for areas that cross state lines).',
+    '  <candidate>_dollars: itemized contributions received (positive receipts); _net_dollars also subtracts negative receipts (refunds on Schedule B are not subtracted).',
+    '  <candidate>_contributions: number of positive receipts (not unique donors).',
+    o.level !== 'state' && o.level !== 'zcta' ? '  <candidate>_dollars_by_address: the part placed by geocoded street address; the rest is split across areas by the HUD USPS ZIP crosswalk, so values and counts can be fractional.' : '',
+    o.population ? '  population: ACS 5-year 2020-2024 (table B01003). dollars_per_100_residents: all three candidates.' : '',
+    o.maxouts && o.period === 'span' ? '  <candidate>_maxout_*: donors who reached the $3,500 per-election limit, summed over the primary, runoff and general (a donor maxing out in two elections counts twice); single_gift = in one gift, accumulated = over several. Not split by period.' : '',
+    o.unallocated ? '  Unallocated rows (blank geoid): dollars whose ZIP falls in non-metro territory or other placeholder areas, by the donor\'s reported state. Tables only.' : '',
+    '', 'Boundaries (GeoJSON, KML): 2020 Census ZCTAs; cb_2024 counties, 119th Congress districts and CBSAs; cb_2022 county subdivisions; simplified for web display, coordinates rounded to 4 decimals (about 11 m).',
+    'Unitemized contributions (generally $200 or less per donor per election) are not included.'].filter(s => s !== '').join('\r\n') + '\r\n';
+}
+function save(blob, name) {
+  const a = document.createElement('a'), url = URL.createObjectURL(blob);
+  a.href = url; a.download = name; document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+async function runExport() {
+  const o = exportOptions();
+  if (!o.formats.length || exporting) return;
+  exporting = true; updateExport();
+  const status = (text) => { $('export-status').textContent = text; };
+  try {
+    const wantGeo = o.formats.some(f => GEO_FORMATS.includes(f));
+    const places = await exportPlaces(o, wantGeo, status);
+    status('Writing files…');
+    await new Promise(r => setTimeout(r));
+    const rows = exportRows(places, o), tables = rows, shapes = rows.filter(r => !r.unallocated);
+    const period = o.period === 'span' ? (state.span[0] === 0 && state.span[1] === phases.length ? 'all' : phases.slice(...state.span).join('-')) : 'by-period';
+    const stem = `senatedonors_${o.level}_${o.scope === 'all' ? 'us' : state.selected.join('-').toLowerCase()}_${period}`;
+    const title = `Senate Donors · ${levels[o.level].title} · ${o.period === 'span' ? periodLabel() : 'by period'}`;
+    const files = o.formats.map(f => ({name: `${stem}.${f}`, parts:
+      f === 'csv' ? [delimited(tables, ',')] : f === 'tsv' ? [delimited(tables, '\t')] :
+      f === 'json' ? [JSON.stringify({source: 'https://bryvado.github.io/SenateDonors/', coverage: state.coverage && {start: state.coverage.coverage_start, end: state.coverage.coverage_end, retrieved: state.coverage.retrieved},
+        level: o.level, period: o.period === 'span' ? periodLabel() : 'by-period', rows: tables.map(r => r.row)})] :
+      f === 'geojson' ? geojsonParts(shapes) : kmlParts(shapes, title)}));
+    if (files.length > 1 || o.zip) {
+      files.push({name: 'README.txt', parts: [exportReadme(o, rows, files.map(f => f.name))]});
+      save(zipBlob(files), stem + '.zip');
+    } else {
+      const f = files[0], ext = o.formats[0];
+      save(new Blob(f.parts, {type: {csv: 'text/csv', tsv: 'text/tab-separated-values', json: 'application/json', geojson: 'application/geo+json', kml: 'application/vnd.google-earth.kml+xml'}[ext]}), f.name);
+    }
+    const mapped = shapes.filter(r => r.geometry).length;
+    const tabular = o.formats.some(f => !GEO_FORMATS.includes(f));
+    status((tabular ? `${rows.length.toLocaleString()} rows` + (wantGeo ? `, ${mapped.toLocaleString()} with boundaries` : '') : `${mapped.toLocaleString()} places with boundaries`) + '.');
+  } catch (error) {
+    status('Export failed: ' + error.message);
+  } finally {
+    exporting = false; updateExport();
+    trimGeo(geoOnScreen());   // an export can parse every state's file; keep only what the map needs
+  }
+}
+$('export-go').addEventListener('click', runExport);
+$('export').addEventListener('change', updateExport);
 
 function restyle() {
   state.states.setStyle(stateStyle);
@@ -1267,7 +1545,7 @@ function refresh() {
   computeScales();
   restyle();
   document.querySelectorAll('.candidate-dot').forEach(dot => { dot.style.background = hues[state[dot.dataset.slot]]; });
-  updateLegend(); updatePanel(); updateRank(); updateDonors(); updateTimeline(); updateFilter(); updateSplom();
+  updateLegend(); updatePanel(); updateRank(); updateDonors(); updateTimeline(); updateFilter(); updateSplom(); updateExport();
 }
 function setData(on, opacity = state.dataOpacity) {
   state.dataOn = on; state.dataOpacity = opacity;
