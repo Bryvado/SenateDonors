@@ -4,8 +4,10 @@ cbsa,CO,C00919084,general,5.03,0.00,0.00
 cbsa,CO,C00919084,primary,0.00,1.00,0.00
 cbsa,FL,C00901918,general,1.00,0.00,0.00
 cbsa,GA,C00901918,runoff,0.26,0.00,0.26
+cbsa,GA,C00919084,general,0.00,1.00,0.00
+cbsa,IL,C00919084,general,0.00,1.00,0.00
 cbsa,KS,C00901918,general,0.00,1.00,0.00
-cbsa,ME,C00919084,general,3.00,0.00,0.00
+cbsa,ME,C00919084,general,4.00,0.00,0.00
 cbsa,MT,C00919084,general,3.00,0.00,0.00
 cbsa,NC,C00919084,primary,1.00,0.00,0.00
 cbsa,ND,C00901918,general,1.00,0.00,0.00
@@ -14,12 +16,13 @@ cbsa,NY,C00901918,general,1.00,0.00,1.00
 cbsa,OR,C00919084,general,1.00,0.00,0.00
 cbsa,TX,C00369033,primary,2.00,0.00,0.00
 cbsa,TX,C00369033,runoff,0.12,1.06,0.00
-cbsa,TX,C00901918,general,12.02,0.00,0.00
+cbsa,TX,C00901918,general,12.99,1.00,0.00
 cbsa,TX,C00901918,primary,14.02,0.00,0.00
 cbsa,TX,C00901918,runoff,4.02,2.00,0.00
-cbsa,TX,C00919084,general,9.02,4.00,3.00
+cbsa,TX,C00919084,general,10.02,8.00,3.00
 cbsa,TX,C00919084,primary,4.00,2.00,0.00
 cbsa,VA,C00369033,primary,0.04,0.00,0.00
 cbsa,VA,C00369033,runoff,0.04,0.00,0.00
 cbsa,VA,C00919084,general,1.00,0.00,0.00
+cbsa,VT,C00919084,general,0.03,0.00,0.00
 cbsa,WV,C00919084,general,0.00,1.00,0.00

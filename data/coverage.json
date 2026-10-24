@@ -1,8 +1,8 @@
 {
-  "retrieved": "2026-10-22",
+  "retrieved": "2026-10-24",
   "coverage_start": "2025-01-01",
   "coverage_end": "2026-10-14",
-  "filing_count": 24,
+  "filing_count": 26,
   "source": "FEC electronic filings",
   "geography": "Reported contributor state and ZIP matched to 2020 Census ZCTA",
   "cd_vintage": "119th Congress districts (Census cb_2024_us_cd119_500k), as used by the HUD 06/2026 ZIP-CD crosswalk",
@@ -11,97 +11,97 @@
     "benchmark": "Public_AR_Current",
     "vintage": "Census2020_Current",
     "pending_addresses": 0,
-    "addresses": 113071,
-    "matched_addresses": 108756,
+    "addresses": 130767,
+    "matched_addresses": 125706,
     "dollar_match_rate_by_candidate": {
       "C00369033": 0.8942,
-      "C00901918": 0.8742,
-      "C00919084": 0.9327
+      "C00901918": 0.8739,
+      "C00919084": 0.9328
     },
     "dollar_match_rate_by_state": {
       "AA": 0.0,
       "AE": 0.0,
-      "AK": 0.7305,
-      "AL": 0.8348,
+      "AK": 0.7379,
+      "AL": 0.8398,
       "AP": 0.0,
-      "AR": 0.7818,
-      "AZ": 0.9125,
-      "CA": 0.9303,
-      "CO": 0.8722,
-      "CT": 0.9336,
-      "DC": 0.9976,
-      "DE": 0.8791,
-      "FL": 0.9271,
+      "AR": 0.7948,
+      "AZ": 0.9159,
+      "CA": 0.9299,
+      "CO": 0.8767,
+      "CT": 0.9295,
+      "DC": 0.9971,
+      "DE": 0.8732,
+      "FL": 0.9286,
       "GA": 0.9104,
-      "HI": 0.7706,
-      "IA": 0.8159,
-      "ID": 0.7472,
-      "IL": 0.9676,
-      "IN": 0.9199,
-      "KS": 0.9671,
-      "KY": 0.9008,
-      "LA": 0.8747,
-      "MA": 0.9435,
-      "MD": 0.9674,
-      "ME": 0.7623,
-      "MI": 0.9312,
-      "MN": 0.954,
-      "MO": 0.9693,
-      "MS": 0.9295,
-      "MT": 0.7779,
-      "NC": 0.8885,
-      "ND": 0.7878,
-      "NE": 0.9604,
-      "NH": 0.6496,
-      "NJ": 0.9428,
-      "NM": 0.8373,
-      "NV": 0.8276,
-      "NY": 0.9334,
-      "OH": 0.9543,
-      "OK": 0.8657,
-      "OR": 0.9168,
-      "PA": 0.913,
-      "PR": 0.3762,
-      "RI": 0.9552,
-      "SC": 0.9354,
-      "SD": 0.9035,
-      "TN": 0.9499,
-      "TX": 0.9218,
-      "UT": 0.8865,
-      "VA": 0.9297,
+      "HI": 0.7913,
+      "IA": 0.8313,
+      "ID": 0.7267,
+      "IL": 0.9672,
+      "IN": 0.9185,
+      "KS": 0.9662,
+      "KY": 0.9128,
+      "LA": 0.8794,
+      "MA": 0.9448,
+      "MD": 0.9682,
+      "ME": 0.765,
+      "MI": 0.9294,
+      "MN": 0.951,
+      "MO": 0.9672,
+      "MS": 0.9254,
+      "MT": 0.7799,
+      "NC": 0.8891,
+      "ND": 0.7855,
+      "NE": 0.9491,
+      "NH": 0.6856,
+      "NJ": 0.9431,
+      "NM": 0.8425,
+      "NV": 0.8409,
+      "NY": 0.9342,
+      "OH": 0.9448,
+      "OK": 0.8654,
+      "OR": 0.9211,
+      "PA": 0.9154,
+      "PR": 0.4354,
+      "RI": 0.9597,
+      "SC": 0.9315,
+      "SD": 0.9089,
+      "TN": 0.9438,
+      "TX": 0.922,
+      "UT": 0.8873,
+      "VA": 0.9312,
       "VI": 0.0,
-      "VT": 0.8943,
-      "WA": 0.9139,
-      "WI": 0.9129,
-      "WV": 0.8704,
-      "WY": 0.4611,
+      "VT": 0.8631,
+      "WA": 0.916,
+      "WI": 0.9147,
+      "WV": 0.8596,
+      "WY": 0.462,
       "XX": 0.0,
       "ZZ": 0.0
     }
   },
   "placement": {
     "county": {
-      "matched_cents": 7375406192,
-      "address_cents": 6793207955,
-      "mapped_address_cents": 6793207955,
+      "matched_cents": 8304274097,
+      "address_cents": 7652876486,
+      "mapped_address_cents": 7652876486,
       "unallocated_cents": 0
     },
     "cd": {
-      "matched_cents": 7374319860,
-      "address_cents": 6792174623,
-      "mapped_address_cents": 6792174623,
-      "unallocated_cents": 22
+      "matched_cents": 8303063008,
+      "address_cents": 7651727397,
+      "mapped_address_cents": 7651727397,
+      "unallocated_cents": 27
     },
     "cbsa": {
-      "matched_cents": 7374372860,
-      "address_cents": 6792174623,
-      "mapped_address_cents": 6690517688,
-      "unallocated_cents": 157891314
+      "matched_cents": 8303125008,
+      "address_cents": 7651727397,
+      "mapped_address_cents": 7536657748,
+      "unallocated_cents": 177238978
     },
     "cousub": {
-      "matched_cents": 7375406192,
-      "address_cents": 6792055985,
-      "mapped_address_cents": 6792055985,
+      "matched_cents": 8304274097,
+      "address_cents": 7651553016,
+      "mapped_address_cents": 7651553016,
       "unallocated_cents": 0
     }
   },
@@ -118,7 +118,7 @@
     },
     "maxed_out_but_net_below_limit": {
       "C00369033": 2,
-      "C00901918": 18,
+      "C00901918": 21,
       "C00919084": 1
     },
     "near_limit": {
@@ -128,11 +128,11 @@
       "C00901918|general": 9,
       "C00901918|primary": 8,
       "C00901918|runoff": 1,
-      "C00919084|general": 63,
+      "C00919084|general": 78,
       "C00919084|primary": 28
     },
     "adjustments": {
-      "memo_rows_applied": 3354,
+      "memo_rows_applied": 3374,
       "rule": "redesignation and reattribution memo rows applied per donor and election"
     },
     "totals": {
@@ -152,9 +152,9 @@
         "over_limit_contributions": 5
       },
       "C00901918|general": {
-        "single_gift": 504,
-        "accumulated": 76,
-        "over_limit_contributions": 39
+        "single_gift": 547,
+        "accumulated": 98,
+        "over_limit_contributions": 48
       },
       "C00901918|primary": {
         "single_gift": 688,
@@ -167,9 +167,9 @@
         "over_limit_contributions": 18
       },
       "C00919084|general": {
-        "single_gift": 1580,
-        "accumulated": 502,
-        "over_limit_contributions": 69
+        "single_gift": 1747,
+        "accumulated": 631,
+        "over_limit_contributions": 74
       },
       "C00919084|primary": {
         "single_gift": 452,
@@ -178,15 +178,15 @@
       }
     },
     "aggregate_check": {
-      "groups": 140006,
-      "agree": 58182,
-      "disagree": 81824,
+      "groups": 158758,
+      "agree": 63900,
+      "disagree": 94858,
       "causes": {
-        "reported higher by up to $200: earlier unitemized receipts (FEC itemizes a donor only past $200)": 77731,
-        "agrees: running sum for the election": 49615,
-        "agrees: cycle-to-date across elections": 8567,
-        "reported higher by more than $200: receipts under another name spelling or ZIP, or aggregates carried across elections plus unitemized receipts": 3290,
-        "reported lower: our key merges receipts the committee aggregates separately (different people or records with the same name and ZIP, or a restarted aggregate)": 803
+        "reported higher by up to $200: earlier unitemized receipts (FEC itemizes a donor only past $200)": 90185,
+        "agrees: running sum for the election": 55152,
+        "agrees: cycle-to-date across elections": 8748,
+        "reported higher by more than $200: receipts under another name spelling or ZIP, or aggregates carried across elections plus unitemized receipts": 3814,
+        "reported lower: our key merges receipts the committee aggregates separately (different people or records with the same name and ZIP, or a restarted aggregate)": 859
       }
     }
   }

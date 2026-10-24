@@ -6,7 +6,8 @@
       2011130,
       2011132,
       2027577,
-      2027782
+      2027782,
+      2039855
     ],
     "C00369033": [
       1886923,
@@ -28,7 +29,8 @@
       1973265,
       1996198,
       2000910,
-      2026455
+      2026455,
+      2039468
     ]
   },
   "reports": [
@@ -79,6 +81,14 @@
       "coverage_end": "2026-09-30",
       "individual_rows": 245799,
       "itemized_cents": 2755766404
+    },
+    {
+      "committee": "C00919084",
+      "file_number": 2039855,
+      "url": "https://docquery.fec.gov/csv/855/2039855.csv",
+      "coverage_end": "2026-10-14",
+      "individual_rows": 70075,
+      "itemized_cents": 805701612
     },
     {
       "committee": "C00369033",
@@ -223,6 +233,14 @@
       "coverage_end": "2026-09-30",
       "individual_rows": 39978,
       "itemized_cents": 644742005
+    },
+    {
+      "committee": "C00901918",
+      "file_number": 2039468,
+      "url": "https://docquery.fec.gov/csv/468/2039468.csv",
+      "coverage_end": "2026-10-14",
+      "individual_rows": 8635,
+      "itemized_cents": 121721135
     }
   ]
 }
